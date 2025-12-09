@@ -1,0 +1,292 @@
+#! /usr/bin/env janet
+
+# note: all input files should express import forms in a specific way, e.g.
+#
+#         (import ./input :prefix "")
+#
+#       the form must be all on one line and should use `:prefix ""`.
+#       definitions in each file should look like:
+#
+#         (def input/slurp-input
+#
+#       that is, use names of the form:
+#
+#         <file-name-no-ext>/<name>
+#
+#       these limitations exist to make the "compilation" process easier.
+
+########################################################################
+
+(defn parse-args
+  [args]
+  (def the-args (array ;args))
+  #
+  (def head (get the-args 0))
+  #
+  (def default-opts @{:rest the-args})
+  #
+  (when (or (not head) (= head "-h") (= head "--help"))
+    (break (merge {:help true} default-opts)))
+  #
+  (def opts
+    (if-not (and (string/has-prefix? "{" head)
+                 (string/has-suffix? "}" head))
+      default-opts
+      (let [parsed
+            (try (parse (string "@" head))
+              ([e] (eprint e)
+                   (errorf "failed to parse options: %n" head)))]
+        (assertf (and parsed (table? parsed))
+                 "expected table but found: %s" (type parsed))
+        (array/remove the-args 0)
+        parsed)))
+  #
+  (merge opts default-opts))
+
+########################################################################
+
+# XXX: more edge cases to identify?
+#      * consecutive separator handling matches
+#        posix more than python / spork/path
+(defn file-dir-path
+  [path]
+  (when (empty? path)
+    (break path))
+  #
+  (def os (or (dyn :os-override) (os/which)))
+  (def bs-land (or (= :windows os) (= :mingw os)))
+  (def sep (if bs-land `\` "/"))
+  (if bs-land
+    (when (peg/match ~(sequence :a `:\` -1) path)
+      (break path))
+    (when (= path "/")
+      (break path)))
+  #
+  (def found-sep
+    (cond
+      (string/find "/" path)
+      "/"
+      #
+      (string/find `\` path)
+      `\`
+      # XXX: take a guess...
+      sep))
+  (def rev-path (string/reverse path))
+  (def last-sep-idx (string/find found-sep rev-path))
+  (def candidate
+    (if-not last-sep-idx
+      path
+      (string/slice path 0
+                    (dec (- (length path) last-sep-idx)))))
+  #
+  (if (not (string/find found-sep candidate))
+    (string candidate found-sep)
+    candidate))
+
+(comment
+
+  # an actual case we want to handle
+  (file-dir-path "/etc/motd")
+  # =>
+  "/etc"
+
+  # another actual case we want to handle
+  (let [old (dyn :os-override)]
+    (setdyn :os-override :windows)
+    (defer (setdyn :os-override old)
+      (file-dir-path `C:\Windows\System32\taskmgr.exe`)))
+  # =>
+  `C:\Windows\System32`
+
+  # everything below here are edge cases we don't care about...
+
+  (file-dir-path "")
+  # =>
+  ""
+
+  (file-dir-path "/")
+  # =>
+  "/"
+
+  # differs from python and spork
+  (file-dir-path "//")
+  # =>
+  "/"
+
+  (file-dir-path "/etc")
+  # =>
+  "/"
+
+  # sames as python's os.path.dirname, different from unix dirname
+  (file-dir-path "/etc/")
+  # =>
+  "/etc"
+
+  (let [old (dyn :os-override)]
+    (setdyn :os-override :windows)
+    (defer (setdyn :os-override old)
+      (file-dir-path `C:\Windows`)))
+  # =>
+  `C:\`
+
+  (let [old (dyn :os-override)]
+    (setdyn :os-override :windows)
+    (defer (setdyn :os-override old)
+      (file-dir-path `A:\`)))
+  # =>
+  `A:\`
+
+  (let [old (dyn :os-override)]
+    (setdyn :os-override :windows)
+    (defer (setdyn :os-override old)
+      (file-dir-path `Z:\`)))
+  # =>
+  `Z:\`
+
+  )
+
+(defn split-path
+  [path]
+  (def fd-path (file-dir-path path))
+  (when (empty? path)
+    (break @["" ""]))
+  #
+  (def idx (inc (string/find fd-path path)))
+  #
+  @[fd-path
+    (string/slice path (+ idx (length fd-path)) -1)])
+
+(comment
+
+  # really the only case we care about
+  (split-path "/etc/motd")
+  # =>
+  @["/etc" "motd"]
+
+  )
+
+(defn touch
+  [path]
+  (with [f (file/open path :w+)]
+    true))
+
+########################################################################
+
+# XXX: a hack -- could reuse parts of a better peg
+(def import-grammar
+  ~(sequence :s* "("
+             :s* "import"
+             :s+
+             # target item
+             (choice (sequence `"`
+                               (capture
+                                 (some
+                                   (if-not (set ` \t\r\n\0\f\v"`) 1)))
+                               `"`)
+                     (capture (some (if-not (set " \t\r\n\0\f\v)") 1))))
+             # the rest
+             (choice ")"
+                      (sequence :s+
+                                (any (if-not ")" 1))
+                                ")"))))
+
+(comment
+
+  (peg/match import-grammar "(import ./pegs)")
+  # =>
+  @["./pegs"]
+
+  (peg/match import-grammar `(import ./pegs :prefix "")`)
+  # =>
+  @["./pegs"]
+
+  (peg/match import-grammar `(import "./pegs")`)
+  # =>
+  @["./pegs"]
+
+  )
+
+# create single file of source from a starting janet file by:
+#
+# 1. starting at file-path, read line by line recording the content in
+#    out-file unless the line is an import form.
+#
+# 2. if an import form is encountered, don't record the line in
+#    out-file, instead if the file it refers to has not been visited,
+#    visit the file and continue recursively.
+(defn build
+  [in-path out-path]
+  # assumes paths are full paths...
+  # XXX: could check if we had abspath?
+  (def [dir-path file-path] (split-path in-path))
+  # remember which files have already been "imported"
+  (def seen @{})
+  # for restoring the current working directory (cwd)
+  (def old-dir (os/cwd))
+  # need to operate relative to in-path's dir
+  (os/cd dir-path)
+  #
+  (defer (os/cd old-dir)
+    (with [out-file (file/open out-path :w)]
+      (defn helper
+        [a-path]
+        (when (in seen a-path) (break))
+        #
+        (put seen a-path true)
+        (with [in-file (file/open a-path :r)]
+          (loop [line :iterate (file/read in-file :line)]
+            (if-let [[name-path] (peg/match import-grammar line)]
+              (helper (string name-path ".janet"))
+              (file/write out-file line)))))
+      (helper file-path)
+      (file/flush out-file))))
+
+(defn abspath?
+  [path &opt bs-land]
+  (def os (os/which))
+  (default bs-land (or (= :windows os) (= :mingw os)))
+  (if bs-land
+    # https://stackoverflow.com/a/23968430
+    # https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats
+    (truthy? (peg/match ~(sequence :a `:\`) path))
+    (string/has-prefix? "/" path)))
+
+########################################################################
+
+(defn main
+  [_ & args]
+  (def opts
+    (let [res (parse-args args)]
+      (when (not (get res :in-path))
+        (put res :in-path "./obj/main.janet"))
+      (when (not (get res :out-path))
+        (put res :out-path "./jagn"))
+      res))
+  #
+  (def os (os/which))
+  (def bs-land (or (= :windows os) (= :mingw os)))
+  (def sep (if bs-land `\` "/"))
+  #
+  (def cur-dir (os/cwd))
+  #
+  (def in-path (get opts :in-path))
+  (assertf in-path "in-path unspecified: %n" opts)
+  (def in-path (os/realpath (string cur-dir sep in-path)))
+  # can't use os/realpath when file does not exist
+  (def out-path
+    (let [op (get opts :out-path)]
+      (if (= :file (os/stat op :mode))
+        (eprintf "warning: overwriting %s" op)
+        (touch op))
+      (assertf (= :file (os/stat op :mode)) "expected file at %s" op)
+      (if (abspath? op)
+        op
+        (os/realpath (string cur-dir sep op)))))
+  # match permissions of in- and out-path if doable
+  (if bs-land
+      (build in-path out-path)
+    (do
+      (def perm (os/stat in-path :permissions))
+      (build in-path out-path)
+      (os/chmod out-path perm))))
+
