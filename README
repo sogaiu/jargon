@@ -1,5 +1,5 @@
 Usage: jagn <patt> <file-or-dir>...
-       jagn <file-or-dir>...
+       jagn <file-or-dir>
        jagn [-h|--help]
 
 Find and display janet definitons.
