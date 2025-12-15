@@ -22,42 +22,6 @@
     "/"))
 
 (defn parse-path
-  [path sep]
-  (def revcap-peg
-    ~(sequence (capture (sequence (choice (to ,sep)
-                                          (thru -1))))
-               (capture (thru -1))))
-  (when-let [[rev-name rev-dir]
-             (-?>> (string/reverse path)
-                   (peg/match revcap-peg)
-                   (map string/reverse))]
-    [(or rev-dir "") rev-name]))
-
-(comment
-
-  (parse-path "/tmp/fun/my.fnl" "/")
-  # =>
-  ["/tmp/fun/" "my.fnl"]
-
-  (parse-path "/my.janet" "/")
-  # =>
-  ["/" "my.janet"]
-
-  (parse-path "pp.el" "/")
-  # =>
-  ["" "pp.el"]
-
-  (parse-path "/" "/")
-  # =>
-  ["/" ""]
-
-  (parse-path "" "/")
-  # =>
-  ["" ""]
-
-  )
-
-(defn parse-path-2
   [path]
   (def revcap-peg
     ~(sequence (capture (sequence (choice (to (choice "/" `\`))
@@ -71,23 +35,23 @@
 
 (comment
 
-  (parse-path-2 "/tmp/fun/my.fnl")
+  (parse-path "/tmp/fun/my.fnl")
   # =>
   ["/tmp/fun/" "my.fnl"]
 
-  (parse-path-2 "/my.janet")
+  (parse-path "/my.janet")
   # =>
   ["/" "my.janet"]
 
-  (parse-path-2 "pp.el")
+  (parse-path "pp.el")
   # =>
   ["" "pp.el"]
 
-  (parse-path-2 "/")
+  (parse-path "/")
   # =>
   ["/" ""]
 
-  (parse-path-2 "")
+  (parse-path "")
   # =>
   ["" ""]
 
@@ -102,7 +66,7 @@
   (unless test-src
     (break :no-tests))
   (def [fdir fname]
-    (parse-path-2 filepath))
+    (parse-path filepath))
   (def test-filepath
     (string fdir "_" fname test-file-ext))
   (unless test-filepath

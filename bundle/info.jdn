@@ -1,0 +1,29 @@
+{:name "jargon"
+ :url "https://github.com/sogaiu/jargon"
+ :repo "git+https://github.com/sogaiu/jargon.git"
+
+ :vendored
+ [{:name "some-bundle-bits"
+   :url "https://github.com/sogaiu/some-bundle-bits"
+   :tag "b9059643baa2d0a822f915e9f1b6cd80308d23c4"
+   :prefix "bundle"
+   :paths ["sbb.janet"]}
+  {:name "janet-ex-as-tests"
+   :url "https://github.com/sogaiu/janet-ex-as-tests"
+   :tag "1dae1a52e03d0f4dc62b4295d23a0662c7dad1d6"
+   :paths [["jeat/init.janet" "jeat/"]
+           ["jeat/location.janet" "jeat/"]
+           ["jeat/loc-jipper.janet" "jeat/"]
+           ["jeat/make-and-run-tests.janet" "jeat/"]
+           ["jeat/to-test.janet" "jeat/"]
+           ["jeat/zipper.janet" "jeat/"]
+           ["test/trigger-jeat.janet" "test/"]]}
+  {:name "jell"
+   :url "https://github.com/sogaiu/jell"
+   :tag "3d8e2284aa038b2a69056027b946b2c2517bc026"
+   :paths [["jell" "bin/"]]}]
+
+ :binscripts
+ [{:main "jagn"
+   :is-janet true}]}
+
