@@ -36,6 +36,7 @@
            {:paths-search true}
            {:enum-defs true})))
 
+
 (def s/sep
   (if (= :windows (os/which))
     `\`
@@ -141,6 +142,7 @@
             (array/push all-results (merge item {:path path})))))))
   #
   [all-results hit-paths])
+
 
 # bl - begin line
 # bc - begin column
@@ -2219,6 +2221,7 @@
   )
 
 
+
 # XXX: if the keys were strings then other code would need to
 #      change...
 (def f/func-definers
@@ -2539,6 +2542,7 @@
   )
 
 
+
 (def c/janet-indent
   "Default indentation that the built-in `doc-format` uses."
   4)
@@ -2602,6 +2606,7 @@
   (c/search-and-report {:query-fn f/find-def-of
                       :paths src-filepaths :name name
                       :depth depth}))
+
 
 
 (def usage
