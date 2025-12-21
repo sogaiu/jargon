@@ -109,11 +109,11 @@
   @[@{:def-type "var"
       :found-name "smile"
       :loc @{:bc 1 :bl 1 :ec 33 :el 1}
-      :src "(var smile \"a docstring\" {:a 2})"}
+      :src `(var smile "a docstring" {:a 2})`}
     @{:def-type "var-"
       :found-name "smile"
       :loc @{:bc 1 :bl 3 :ec 30 :el 3}
-      :src "(var- smile \"woohoo\" \"hello\")"}]
+      :src `(var- smile "woohoo" "hello")`}]
 
   (f/find-def-of
     ``
@@ -130,7 +130,7 @@
     @{:def-type "defdyn"
       :found-name "*smile*"
       :loc @{:bc 1 :bl 3 :ec 37 :el 3}
-      :src "(defdyn *smile* \"smiling docstring\")"}]
+      :src `(defdyn *smile* "smiling docstring")`}]
 
   (f/find-def-of
     ```
@@ -154,7 +154,8 @@
         "  any function be used as a macro. Inside a quasiquote, the\n"
         "  idiom `(as-macro ,my-custom-macro arg1 arg2...)` can be used\n"
         "  to avoid unwanted variable capture of `my-custom-macro`.``\n"
-        "  [f & args]\n  (f ;args))")}]
+        "  [f & args]\n"
+        "  (f ;args))")}]
 
   (f/find-def-of
     ``
@@ -170,7 +171,7 @@
   @[@{:def-type "def"
       :found-name "smile"
       :loc @{:bc 1 :bl 1 :ec 28 :el 1}
-      :src "(def smile \"a docstring\" 1)"}
+      :src `(def smile "a docstring" 1)`}
     @{:def-type "defn"
       :found-name "smile"
       :loc @{ :bc 1 :bl 3 :ec 10 :el 6}
@@ -243,12 +244,18 @@
       :found-name "smile"
       :loc @{:bc 1 :bl 1 :ec 10 :el 4}
       :src
-      "(defn smile\n  \"I am a defn docstring.\"\n  [y]\n  (pp y))"}
+      (string "(defn smile\n"
+              "  \"I am a defn docstring.\"\n"
+              "  [y]\n"
+              "  (pp y))")}
     @{:def-type "defn-"
       :found-name "smile"
       :loc @{:bc 1 :bl 6 :ec 15 :el 9}
       :src
-      "(defn- smile\n  \"I am a defn- docstring.\"\n  [z]\n  (pp [:z z]))"}]
+      (string "(defn- smile\n"
+              "  \"I am a defn- docstring.\"\n"
+              "  [z]\n"
+              "  (pp [:z z]))")}]
 
   (f/find-defs
     ``
@@ -260,11 +267,11 @@
   @[@{:def-type "var" 
       :found-name "smile" 
       :loc @{ :bc 1 :bl 1 :ec 33 :el 1} 
-      :src "(var smile \"a docstring\" {:a 2})"} 
+      :src `(var smile "a docstring" {:a 2})`} 
     @{:def-type "var-" 
       :found-name "smile" 
       :loc @{ :bc 1 :bl 3 :ec 30 :el 3} 
-      :src "(var- smile \"woohoo\" \"hello\")"}]
+      :src `(var- smile "woohoo" "hello")`}]
 
   (f/find-defs
     ``
@@ -280,7 +287,7 @@
     @{:def-type "defdyn" 
       :found-name "*smile*" 
       :loc @{ :bc 1 :bl 3 :ec 37 :el 3} 
-      :src "(defdyn *smile* \"smiling docstring\")"}]
+      :src `(defdyn *smile* "smiling docstring")`}]
 
   (f/find-defs
     ```
@@ -296,7 +303,14 @@
   @[@{:def-type "defmacro" 
       :found-name "as-macro" 
       :loc @{ :bc 1 :bl 1 :ec 13 :el 7} 
-      :src "(defmacro as-macro\n  ``Use a function or macro literal `f` as a macro. This lets\n  any function be used as a macro. Inside a quasiquote, the\n  idiom `(as-macro ,my-custom-macro arg1 arg2...)` can be used\n  to avoid unwanted variable capture of `my-custom-macro`.``\n  [f & args]\n  (f ;args))"}]
+      :src
+      (string
+        "(defmacro as-macro\n"
+        "  ``Use a function or macro literal `f` as a macro. This lets\n"
+        "  any function be used as a macro. Inside a quasiquote, the\n"
+        "  idiom `(as-macro ,my-custom-macro arg1 arg2...)` can be used\n"
+        "  to avoid unwanted variable capture of `my-custom-macro`.``\n"
+        "  [f & args]\n  (f ;args))")}]
 
   (f/find-defs
     ``
@@ -311,7 +325,7 @@
   @[@{:def-type "def"
       :found-name "smile"
       :loc @{:bc 1 :bl 1 :ec 28 :el 1}
-      :src "(def smile \"a docstring\" 1)"}
+      :src `(def smile "a docstring" 1)`}
     @{:def-type "defn"
       :found-name "smile"
       :loc @{:bc 1 :bl 3 :ec 10 :el 6}
