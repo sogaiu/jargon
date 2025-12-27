@@ -7,24 +7,19 @@
   #
   (def head (get the-args 0))
   #
-  (def default-opts @{:rest the-args})
+  (def conf-file ".jtfm.jdn")
   #
-  (def conf
-    (let [conf-file ".jell.jdn"]
-      (when (= :file (os/stat conf-file :mode))
-        (eachp [k v] (parse (slurp conf-file))
-          (setdyn k v))
-        true)))
-  #
-  (when (or (and (not conf) (not head))
-            (= head "-h") (= head "--help"))
-    (break (merge {:help true} default-opts)))
+  (when (or (= head "-h") (= head "--help")
+            # might have been invoked with no paths in repository root
+            (and (not head)
+                 (not= :file (os/stat conf-file :mode))))
+    (break @{:help true}))
   #
   (def opts
     (if head
       (if-not (and (string/has-prefix? "{" head)
                    (string/has-suffix? "}" head))
-        default-opts
+        @{}
         (let [parsed
               (try (parse (string "@" head))
                 ([e] (eprint e)
@@ -34,36 +29,169 @@
           (array/remove the-args 0)
           parsed))
       @{}))
-  # XXX: should opts have priority over the-args?
-  (when (nil? (get opts :start-path))
-    (put opts :start-path (dyn :start-path "src/main.janet")))
   #
-  (when (nil? (get opts :obj-path))
-    (put opts :obj-path (dyn :obj-path "obj")))
+  (def [includes excludes]
+    (cond
+      # paths on command line take precedence over conf file
+      (not (empty? the-args))
+      [the-args @[]]
+      # conf file
+      (= :file (os/stat conf-file :mode))
+      (let [conf (try (parse (slurp conf-file))
+                   ([e] (error e)))]
+        (assertf conf "failed to parse: %s" conf-file)
+        (assertf (dictionary? conf)
+                 "expected dictionary, got: %s" (type conf))
+        #
+        [(array ;(get conf :includes @[]))
+         (array ;(get conf :excludes @[]))])
+      #
+      (errorf "unexpected result parsing: %n" args)))
   #
-  (when (nil? (get opts :out-path))
-    (put opts :out-path (dyn :out-path "j.out")))
+  (defn merge-indexed
+    [left right]
+    (default left [])
+    (default right [])
+    (distinct [;left ;right]))
   #
-  (when (nil? (get opts :flycheck))
-    (put opts :flycheck (dyn :flycheck true)))
-  #
-  (when-let [start-path (get the-args 0)]
-    (put opts :start-path start-path)
-    (array/remove the-args 0))
-  #
-  (when-let [out-path (get the-args 0)]
-    (put opts :out-path out-path)
-    (array/remove the-args 0))
-  #
-  (when-let [obj-path (get the-args 0)]
-    (put opts :obj-path obj-path)
-    (array/remove the-args 0))
-  #
-  (merge opts default-opts))
+  (merge opts
+         {:includes (merge-indexed includes (get opts :includes))
+          :excludes (merge-indexed excludes (get opts :excludes))}))
+
+(comment
+
+  (a/parse-args ["src/main.janet"])
+  # =>
+  @{:excludes @[]
+    :includes @["src/main.janet"]}
+
+  (a/parse-args ["-h"])
+  # =>
+  @{:help true}
+
+  (a/parse-args ["{:overwrite true}" "src/main.janet"])
+  # =>
+  @{:excludes @[]
+    :includes @["src/main.janet"]
+    :overwrite true}
+
+  (a/parse-args [`{:excludes ["src/args.janet"]}` "src/main.janet"])
+  # =>
+  @{:excludes @["src/args.janet"]
+    :includes @["src/main.janet"]}
+
+  )
 
 
-(comment import ./link :prefix "")
-(comment import ./common :prefix "")
+(comment import ./search :prefix "")
+(def s/sep
+  (if (= :windows (os/which))
+    `\`
+    "/"))
+
+(defn s/find-files
+  [dir &opt pred]
+  (default pred identity)
+  (def paths @[])
+  (defn helper
+    [a-dir]
+    (each path (os/dir a-dir)
+      (def sub-path
+        (string a-dir s/sep path))
+      (case (os/stat sub-path :mode)
+        :directory
+        (when (not= path ".git")
+          (when (not (os/stat (string sub-path s/sep ".gitrepo")))
+            (helper sub-path)))
+        #
+        :file
+        (when (pred sub-path)
+          (array/push paths sub-path)))))
+  (helper dir)
+  paths)
+
+(comment
+
+  (s/find-files "." |(string/has-suffix? ".janet" $))
+
+  )
+
+(defn s/clean-end-of-path
+  [path a-sep]
+  (when (one? (length path))
+    (break path))
+  (if (string/has-suffix? a-sep path)
+    (string/slice path 0 -2)
+    path))
+
+(comment
+
+  (s/clean-end-of-path "hello/" "/")
+  # =>
+  "hello"
+
+  (s/clean-end-of-path "/" "/")
+  # =>
+  "/"
+
+  )
+
+(defn s/has-janet-shebang?
+  [path]
+  (with [f (file/open path)]
+    (def first-line (file/read f :line))
+    (when first-line
+      (and (string/find "env" first-line)
+           (string/find "janet" first-line)))))
+
+(defn s/collect-paths
+  [includes &opt pred]
+  (default pred identity)
+  (def filepaths @[])
+  # collect file and directory paths
+  (each thing includes
+    (def apath (s/clean-end-of-path thing s/sep))
+    (def mode (os/stat apath :mode))
+    # XXX: should :link be supported?
+    (cond
+      (= :file mode)
+      (array/push filepaths apath)
+      #
+      (= :directory mode)
+      (array/concat filepaths (s/find-files apath pred))
+      #
+      (do
+        (eprintf "No such file or not an ordinary file or directory: %s"
+                 apath)
+        (os/exit 1))))
+  #
+  filepaths)
+
+(defn s/search-paths
+  [query-fn opts]
+  (def {:name name :paths src-paths} opts)
+  #
+  (def all-results @[])
+  (def hit-paths @[])
+  (each path src-paths
+    (def src (slurp path))
+    (when (pos? (length src))
+      (when (or (not name)
+                (string/find name src))
+        (array/push hit-paths path)
+        (def results
+          (try
+            (query-fn src opts)
+            ([e]
+              (eprintf "search failed for: %s" path))))
+        (when (and results (not (empty? results)))
+          (each item results
+            (array/push all-results (merge item {:path path})))))))
+  #
+  [all-results hit-paths])
+
+
+(comment import ./rewrite :prefix "")
 (comment import ./jipper :prefix "")
 # bl - begin line
 # bc - begin column
@@ -2220,847 +2348,1155 @@
   )
 
 
-(comment import ./utils :prefix "")
-(defn u/maybe-dump
-  [& args]
-  (assertf (even? (length args))
-           "expected even number or args: %n" args)
-  #
-  (when (os/getenv "VERBOSE")
-    (each [name value] (partition 2 args)
-      (cond
-        (dictionary? value)
+(comment import ./verify :prefix "")
+# XXX: try to put in file?  had trouble originally when working on
+#      judge-gen.  may be will have more luck?
+(def v/as-string
+  ``
+  # influenced by janet's tools/helper.janet
+
+  (var _verify/start-time 0)
+  (var _verify/end-time 0)
+  (var _verify/test-results @[])
+
+  (defmacro _verify/is
+    [t-form e-form &opt name]
+    (default name
+      (string "test-" (inc (length _verify/test-results))))
+    (with-syms [$ts $tr
+                $es $er]
+      ~(do
+         (def [,$ts ,$tr] (protect (eval ',t-form)))
+         (def [,$es ,$er] (protect (eval ',e-form)))
+         (array/push _verify/test-results
+                     {:expected-form ',e-form
+                      :expected-value ,$er
+                      :name ,name
+                      :passed (if (and ,$ts ,$es)
+                                (deep= ,$tr ,$er)
+                                nil)
+                      :test-form ',t-form
+                      :test-value ,$tr
+                      :type :is})
+         ,name)))
+
+  (defn _verify/start-tests
+    []
+    (set _verify/start-time (os/clock))
+    (set _verify/test-results @[]))
+
+  (defn _verify/end-tests
+    []
+    (set _verify/end-time (os/clock)))
+
+  (defn _verify/print-color
+    [msg color]
+    # XXX: what if color doesn't match...
+    (let [color-num (match color
+                      :black 30
+                      :blue 34
+                      :cyan 36
+                      :green 32
+                      :magenta 35
+                      :red 31
+                      :white 37
+                      :yellow 33)]
+      (prin (string "\e[" color-num "m"
+                    msg
+                    "\e[0m"))))
+
+  (defn _verify/dashes
+    [&opt n]
+    (default n 60)
+    (string/repeat "-" n))
+
+  (defn _verify/print-dashes
+    [&opt n]
+    (print (_verify/dashes n)))
+
+  (defn _verify/print-form
+    [form &opt color]
+    (def buf @"")
+    (with-dyns [:out buf]
+      (printf "%m" form))
+    (def msg (string/trimr buf))
+    (print ":")
+    (if color
+      (_verify/print-color msg color)
+      (prin msg))
+    (print))
+
+  (defn _verify/report
+    []
+    (var total-tests 0)
+    (var total-passed 0)
+    # analyze results
+    (var passed 0)
+    (var num-tests (length _verify/test-results))
+    (var fails @[])
+    (each test-result _verify/test-results
+      (++ total-tests)
+      (def {:passed test-passed} test-result)
+      (if test-passed
         (do
-          (pp [name])
-          (eachp [k v] value
-            (printf "%n: %n" k v)))
-        #
-        (indexed? value)
-        (do
-          (pp [name])
-          (each v value
-            (pp v)))
-        #
-        (pp [name value])))
-    (print)))
+          (++ passed)
+          (++ total-passed))
+        (array/push fails test-result)))
+    # report any failures
+    (var i 0)
+    (each fail fails
+      (def {:test-value test-value
+            :expected-value expected-value
+            :name test-name
+            :passed test-passed
+            :test-form test-form} fail)
+      (++ i)
+      (print)
+      (prin "--(")
+      (_verify/print-color i :cyan)
+      (print ")--")
+      (print)
+      #
+      (_verify/print-color "failed:" :yellow)
+      (print)
+      (_verify/print-color test-name :red)
+      (print)
+      #
+      (print)
+      (_verify/print-color "form" :yellow)
+      (_verify/print-form test-form)
+      #
+      (print)
+      (_verify/print-color "expected" :yellow)
+      (_verify/print-form expected-value)
+      #
+      (print)
+      (_verify/print-color "actual" :yellow)
+      (_verify/print-form test-value :blue))
+    (when (zero? (length fails))
+      (print)
+      (print "No tests failed."))
+    # summarize totals
+    (print)
+    (_verify/print-dashes)
+    (when (= 0 total-tests)
+      (print "No tests found, so no judgements made.")
+      (break true))
+    (if (not= total-passed total-tests)
+      (_verify/print-color total-passed :red)
+      (_verify/print-color total-passed :green))
+    (prin " of ")
+    (_verify/print-color total-tests :green)
+    (print " passed")
+    (_verify/print-dashes)
+    (when (not= total-passed total-tests)
+      (os/exit 1)))
+  ``)
 
-########################################################################
 
-(defn u/get-os-bits
-  []
-  (def os (or (dyn :os-override) (os/which)))
-  (def bs-land (or (= :windows os) (= :mingw os)))
-  (def sep (if bs-land `\` "/"))
-  #
-  {:os os
-   :bs-land bs-land
-   :sep sep})
 
-# XXX: more edge cases to identify?
-#      * consecutive separator handling matches
-#        posix more than python / spork/path
-(defn u/file-dir-path
-  [path]
-  (when (empty? path)
-    (break path))
-  #
-  (def {:sep sep :bs-land bs-land} (u/get-os-bits))
-  (if bs-land
-    (when (peg/match ~(sequence :a `:\` -1) path)
-      (break path))
-    (when (= path "/")
-      (break path)))
-  #
-  (def rev-path (string/reverse path))
-  (def last-sep-idx (string/find sep rev-path))
-  (def candidate
-    (if-not last-sep-idx
-      path
-      (string/slice path 0
-                    (dec (- (length path) last-sep-idx)))))
-  #
-  (if (not (string/find sep candidate))
-    (string candidate sep)
-    candidate))
+# at its simplest, a test is expressed like:
+#
+# (comment
+#
+#   (+ 1 1)
+#   # =>
+#   2
+#
+#   )
+#
+# i.e. inside a comment form, a single test consists of:
+#
+# * a test expression        - `(+ 1 1)`
+# * a test indicator         - `# =>`
+# * an expected expression   - `2`
+#
+# there can be one or more tests within a comment form.
+
+# ti == test indicator, which can look like any of:
+#
+# # =>
+# # before =>
+# # => after
+# # before => after
+#
+# further constraint that neither `before` nor `after` should contain
+# a hash character (#)
+
+(defn r/find-test-indicator
+  [zloc]
+  (var label-left nil)
+  (var label-right nil)
+  [(j/right-until zloc
+                  |(match (j/node $)
+                     [:comment _ content]
+                     (if-let [[l r]
+                              (peg/match ~(sequence "#"
+                                                    (capture (to "=>"))
+                                                    "=>"
+                                                    (capture (thru -1)))
+                                         content)
+                              no-hash-left (nil? (string/find "#" l))
+                              no-hash-right (nil? (string/find "#" r))]
+                       (do
+                         (set label-left (string/trim l))
+                         (set label-right (string/trim r))
+                         true)
+                       false)))
+   label-left
+   label-right])
 
 (comment
 
-  # an actual case we want to handle
-  (u/file-dir-path "/etc/motd")
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
+
+  (def src
+    (string "(+ 1 1)" eol
+            "# =>"    eol
+            "2"))
+
+  (let [[zloc l r]
+        (r/find-test-indicator (-> (j/par src)
+                                 j/zip-down))]
+    (and zloc
+         (empty? l)
+         (empty? r)))
   # =>
-  "/etc"
+  true
 
-  # another actual case we want to handle
-  (let [old (dyn :os-override)]
-    (setdyn :os-override :windows)
-    (defer (setdyn :os-override old)
-      (u/file-dir-path `C:\Windows\System32\taskmgr.exe`)))
+  (def src
+    (string "(+ 1 1)"     eol
+            "# before =>" eol
+            "2"))
+
+  (let [[zloc l r]
+        (r/find-test-indicator (-> (j/par src)
+                                 j/zip-down))]
+    (and zloc
+         (= "before" l)
+         (empty? r)))
   # =>
-  `C:\Windows\System32`
+  true
 
-  # everything below here are edge cases we don't care about...
+  (def src
+    (string "(+ 1 1)"    eol
+            "# => after" eol
+            "2"))
 
-  (u/file-dir-path "")
+  (let [[zloc l r]
+        (r/find-test-indicator (-> (j/par src)
+                                 j/zip-down))]
+    (and zloc
+         (empty? l)
+         (= "after" r)))
+  # =>
+  true
+
+  )
+
+(defn r/find-test-expr
+  [ti-zloc]
+  # check for appropriate conditions "before"
+  (def before-zlocs @[])
+  (var curr-zloc ti-zloc)
+  (var found-before nil)
+  # collect zlocs to the left of the test indicator up through the
+  # first non-whitespace/comment one.  if there is a
+  # non-whitespace/comment one, that is the test expression.
+  (while curr-zloc
+    (set curr-zloc (j/left curr-zloc))
+    (when (nil? curr-zloc)
+      (break))
+    #
+    (match (j/node curr-zloc)
+      [:comment]
+      (array/push before-zlocs curr-zloc)
+      #
+      [:whitespace]
+      (array/push before-zlocs curr-zloc)
+      #
+      (do
+        (set found-before true)
+        (array/push before-zlocs curr-zloc)
+        (break))))
+  #
+  (cond
+    (nil? curr-zloc)
+    :no-test-expression
+    # if all collected zlocs (except the last one) are whitespace,
+    # then the test expression has been located
+    (and found-before
+         (->> (slice before-zlocs 0 -2)
+              (filter |(not (match (j/node $)
+                              [:whitespace]
+                              true)))
+              length
+              zero?))
+    curr-zloc
+    #
+    :unexpected-result))
+
+(comment
+
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
+
+  (def src
+    (string "(comment"         eol
+            eol
+            "  (def a 1)"      eol
+            eol
+            "  (put @{} :a 2)" eol
+            "  # =>"           eol
+            "  @{:a 2}"        eol
+            eol
+            "  )"))
+
+  (def [ti-zloc _ _]
+    (r/find-test-indicator (-> (j/par src)
+                             j/zip-down
+                             j/down)))
+
+  (j/node ti-zloc)
+  # =>
+  [:comment @{:bc 3 :bl 6 :ec 7 :el 6} "# =>"]
+
+  (def test-expr-zloc (r/find-test-expr ti-zloc))
+
+  (j/node test-expr-zloc)
+  # =>
+  [:tuple @{:bc 3 :bl 5 :ec 17 :el 5}
+   [:symbol @{:bc 4 :bl 5 :ec 7 :el 5} "put"]
+   [:whitespace @{:bc 7 :bl 5 :ec 8 :el 5} " "]
+   [:table @{:bc 8 :bl 5 :ec 11 :el 5}]
+   [:whitespace @{:bc 11 :bl 5 :ec 12 :el 5} " "]
+   [:keyword @{:bc 12 :bl 5 :ec 14 :el 5} ":a"]
+   [:whitespace @{:bc 14 :bl 5 :ec 15 :el 5} " "]
+   [:number @{:bc 15 :bl 5 :ec 16 :el 5} "2"]]
+
+  (-> (j/left test-expr-zloc)
+      j/node)
+  # =>
+  [:whitespace @{:bc 1 :bl 5 :ec 3 :el 5} "  "]
+
+  )
+
+(defn r/find-expected-expr
+  [ti-zloc]
+  (def after-zlocs @[])
+  (var curr-zloc ti-zloc)
+  (var found-comment nil)
+  (var found-after nil)
+  # collect zlocs to the right of the test indicator up through the
+  # first non-whitespace/comment one.  if there is a
+  # non-whitespace/comment one, that is the expression used to compute
+  # the expected value.
+  (while curr-zloc
+    (set curr-zloc (j/right curr-zloc))
+    (when (nil? curr-zloc)
+      (break))
+    #
+    (match (j/node curr-zloc)
+      [:comment]
+      (do
+        (set found-comment true)
+        (break))
+      #
+      [:whitespace]
+      (array/push after-zlocs curr-zloc)
+      #
+      (do
+        (set found-after true)
+        (array/push after-zlocs curr-zloc)
+        (break))))
+  #
+  (cond
+    (or (nil? curr-zloc)
+        found-comment)
+    :no-expected-expression
+    # if there was a non-whitespace/comment zloc and the first zloc
+    # "captured" represents eol (i.e. the first zloc to the right of
+    # the test indicator), then there might be a an "expected
+    # expression" that follows...
+    (and found-after
+         (match (j/node (first after-zlocs))
+           [:whitespace _ "\n"]
+           true
+           [:whitespace _ "\r\n"]
+           true))
+    # starting on the line after the eol zloc, keep collected zlocs up
+    # to (but not including) another eol zloc.  the first
+    # non-whitespace zloc of the kept zlocs represents the "expected
+    # expression".
+    (if-let [from-next-line (drop 1 after-zlocs)
+             before-eol-zloc (take-until |(match (j/node $)
+                                            [:whitespace _ "\n"]
+                                            true
+                                            [:whitespace _ "\r\n"]
+                                            true)
+                                         from-next-line)
+             target (->> before-eol-zloc
+                         (filter |(match (j/node $)
+                                    [:whitespace]
+                                    false
+                                    #
+                                    true))
+                         first)]
+      target
+      :no-expected-expression)
+    #
+    :unexpected-result))
+
+(comment
+
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
+
+  (def src
+    (string "(comment"         eol
+            eol
+            "  (def a 1)"      eol
+            eol
+            "  (put @{} :a 2)" eol
+            "  # =>"           eol
+            "  @{:a 1"         eol
+            "    :b 2}"        eol
+            eol
+            "  )"))
+
+  (def [ti-zloc _ _]
+    (r/find-test-indicator (-> (j/par src)
+                             j/zip-down
+                             j/down)))
+
+  (j/node ti-zloc)
+  # =>
+  [:comment @{:bc 3 :bl 6 :ec 7 :el 6} "# =>"]
+
+  (def expected-expr-zloc (r/find-expected-expr ti-zloc))
+
+  (j/node expected-expr-zloc)
+  # =>
+  [:table @{:bc 3 :bl 7 :ec 10 :el 8}
+   [:keyword @{:bc 5 :bl 7 :ec 7 :el 7} ":a"]
+   [:whitespace @{:bc 7 :bl 7 :ec 8 :el 7} " "]
+   [:number @{:bc 8 :bl 7 :ec 9 :el 7} "1"]
+   [:whitespace @{:bc 9 :bl 7 :ec 1 :el 8} "\n"]
+   [:whitespace @{:bc 1 :bl 8 :ec 5 :el 8} "    "]
+   [:keyword @{:bc 5 :bl 8 :ec 7 :el 8} ":b"]
+   [:whitespace @{:bc 7 :bl 8 :ec 8 :el 8} " "]
+   [:number @{:bc 8 :bl 8 :ec 9 :el 8} "2"]]
+
+  (-> (j/left expected-expr-zloc)
+      j/node)
+  # =>
+  [:whitespace @{:bc 1 :bl 7 :ec 3 :el 7} "  "]
+
+  (def src
+    (string "(comment"                eol
+            eol
+            "  (butlast @[:a :b :c])" eol
+            "  # => @[:a :b]"         eol
+            eol
+            "  (butlast [:a])"        eol
+            "  # => []"               eol
+            eol
+            ")"))
+
+  (def [ti-zloc _ _]
+    (r/find-test-indicator (-> (j/par src)
+                             j/zip-down
+                             j/down)))
+
+  (j/node ti-zloc)
+  # =>
+  [:comment @{:bc 3 :bl 4 :ec 16 :el 4} "# => @[:a :b]"]
+
+  (r/find-expected-expr ti-zloc)
+  # =>
+  :no-expected-expression
+
+  )
+
+(defn r/make-label
+  [left right]
+  (string ""
+          (when (not (empty? left))
+            (string " " left))
+          (when (or (not (empty? left))
+                    (not (empty? right)))
+            (string " =>"))
+          (when (not (empty? right))
+            (string " " right))))
+
+(comment
+
+  (r/make-label "hi" "there")
+  # =>
+  " hi => there"
+
+  (r/make-label "hi" "")
+  # =>
+  " hi =>"
+
+  (r/make-label "" "there")
+  # =>
+  " => there"
+
+  (r/make-label "" "")
   # =>
   ""
 
-  (u/file-dir-path "/")
-  # =>
-  "/"
-
-  # differs from python and spork
-  (u/file-dir-path "//")
-  # =>
-  "/"
-
-  (u/file-dir-path "/etc")
-  # =>
-  "/"
-
-  # sames as python's os.path.dirname, different from unix dirname
-  (u/file-dir-path "/etc/")
-  # =>
-  "/etc"
-
-  (let [old (dyn :os-override)]
-    (setdyn :os-override :windows)
-    (defer (setdyn :os-override old)
-      (u/file-dir-path `C:\Windows`)))
-  # =>
-  `C:\`
-
-  (let [old (dyn :os-override)]
-    (setdyn :os-override :windows)
-    (defer (setdyn :os-override old)
-      (u/file-dir-path `A:\`)))
-  # =>
-  `A:\`
-
-  (let [old (dyn :os-override)]
-    (setdyn :os-override :windows)
-    (defer (setdyn :os-override old)
-      (u/file-dir-path `Z:\`)))
-  # =>
-  `Z:\`
-
   )
 
-(defn u/split-path
-  [path]
-  (def fd-path (u/file-dir-path path))
-  (when (empty? path)
-    (break @["" ""]))
+(defn r/find-exprs
+  [ti-zloc]
+  # look for a test expression
+  (def test-expr-zloc (r/find-test-expr ti-zloc))
+  (case test-expr-zloc
+    :no-test-expression
+    (break [nil nil])
+    #
+    :unexpected-result
+    (errorf "unexpected result from `find-test-expr`: %p"
+            test-expr-zloc))
+  # look for an expected value expression
+  (def expected-expr-zloc (r/find-expected-expr ti-zloc))
+  (case expected-expr-zloc
+    :no-expected-expression
+    (break [test-expr-zloc nil])
+    #
+    :unexpected-result
+    (errorf "unexpected result from `find-expected-expr`: %p"
+            expected-expr-zloc))
   #
-  (def {:sep sep :bs-land bs-land} (u/get-os-bits))
-  (def sep-idxs (string/find-all sep path))
-  (when (= 0 (length sep-idxs))
-    (break @["" path]))
-  #
-  (when (= 1 (length sep-idxs))
-    (break @[fd-path
-             (string/slice path (inc (last sep-idxs)))]))
-  #
-  (def idx (inc (string/find fd-path path)))
-  #
-  @[fd-path
-    (string/slice path (+ idx (length fd-path)) -1)])
+  [test-expr-zloc expected-expr-zloc])
 
 (comment
 
-  # one case we care about
-  (u/split-path "/etc/motd")
-  # =>
-  @["/etc" "motd"]
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
 
-  # another case we care about
-  (u/split-path "/hello.janet")
-  # =>
-  @["/" "hello.janet"]
+  (def src
+    (string "(+ 1 1)" eol
+            "# =>"    eol
+            "2"))
 
-  (u/split-path "./blocks/blank.html")
-  # =>
-  @["./blocks" "blank.html"]
+  (def [ti-zloc _ _]
+    (r/find-test-indicator (-> (j/par src)
+                             j/zip-down)))
 
-  (u/split-path "cli.janet")
+  (def [t-zloc e-zloc] (r/find-exprs ti-zloc))
+
+  (j/gen (j/node t-zloc))
   # =>
-  @["" "cli.janet"]
+  "(+ 1 1)"
+
+  (j/gen (j/node e-zloc))
+  # =>
+  "2"
 
   )
 
-(defn u/abspath?
-  [path &opt bs-land]
-  (def os (os/which))
-  (default bs-land (or (= :windows os) (= :mingw os)))
-  (if bs-land
-    # https://stackoverflow.com/a/23968430
-    # https://learn.microsoft.com/en-us/dotnet/standard/io/file-path-formats
-    (truthy? (peg/match ~(sequence :a `:\`) path))
-    (string/has-prefix? "/" path)))
+(defn r/wrap-as-test-call
+  [start-zloc end-zloc test-label]
+  # XXX: hack - not sure if robust enough
+  (def eol-str (if (= :windows (os/which)) "\r\n" "\n"))
+  (-> (j/wrap start-zloc [:tuple @{}] end-zloc)
+      # newline important for preserving long strings
+      (j/insert-child [:whitespace @{} eol-str])
+      # name of test macro
+      (j/insert-child [:symbol @{} "_verify/is"])
+      # for column zero convention, insert leading whitespace
+      # before the beginning of the tuple (_verify/is ...)
+      (j/insert-left [:whitespace @{} "  "])
+      # add location info argument
+      (j/append-child [:whitespace @{} " "])
+      (j/append-child [:string @{} test-label])))
 
-(defn u/diff-path
-  [left right]
-  (var i 0)
-  (var done false)
-  (def [shorter longer]
-    (if (<= (length left) (length right))
-      [left right]
-      [right left]))
-  (for j 0 (length shorter)
-    (when (not= (get left j) (get right j))
-      (set done true)
-      (set i j)
+(comment
+
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
+
+  (def src
+    (string "(+ 1 1)" eol
+            "# =>"    eol
+            "2"))
+
+  (def [ti-zloc _ _]
+    (r/find-test-indicator (-> (j/par src)
+                             j/zip-down)))
+
+  (def [t-zloc e-zloc] (r/find-exprs ti-zloc))
+
+  (let [left-of-t-zloc (j/left t-zloc)
+        start-zloc (match (j/node left-of-t-zloc)
+                     [:whitespace]
+                     left-of-t-zloc
+                     #
+                     t-zloc)
+        w-zloc (r/wrap-as-test-call start-zloc e-zloc "\n\"hi!\"")]
+    (j/gen (j/node w-zloc)))
+  # =>
+  (string "(_verify/is\n"
+          "(+ 1 1)\n"
+          "# =>\n"
+          "2 \n"
+          `"hi!")`)
+
+  )
+
+(defn r/rewrite-comment-zloc
+  [comment-zloc]
+  # move into comment block
+  (var curr-zloc (j/down comment-zloc))
+  (var found-test nil)
+  # process comment block content
+  (while (not (j/end? curr-zloc))
+    (def [ti-zloc label-left label-right] (r/find-test-indicator curr-zloc))
+    (when (not ti-zloc)
+      (break))
+    #
+    (def [test-expr-zloc expected-expr-zloc] (r/find-exprs ti-zloc))
+    (set curr-zloc
+         (if (or (nil? test-expr-zloc)
+                 (nil? expected-expr-zloc))
+           (j/right curr-zloc) # next
+           # found a complete test, work on rewriting
+           (let [left-of-te-zloc (j/left test-expr-zloc)
+                 start-zloc (match (j/node left-of-te-zloc)
+                              [:whitespace]
+                              left-of-te-zloc
+                              #
+                              test-expr-zloc)
+                 end-zloc expected-expr-zloc
+                 # XXX: use `attrs` here?
+                 ti-line-no ((get (j/node ti-zloc) 1) :bl)
+                 test-label (string `"`
+                                    `line-` ti-line-no
+                                    (r/make-label label-left label-right)
+                                    `"`)]
+             (set found-test true)
+             (r/wrap-as-test-call start-zloc end-zloc test-label)))))
+  # navigate back out to top of block
+  (when found-test
+    # morph comment block into plain tuple -- to be unwrapped later
+    (-> curr-zloc
+        j/up
+        j/down
+        (j/replace [:whitespace @{} " "])
+        # begin hack to prevent trailing whitespace once unwrapping occurs
+        j/rightmost
+        (j/insert-right [:keyword @{} ":smile"])
+        # end of hack
+        j/up)))
+
+(comment
+
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
+
+  (def src
+    (string "(comment"         eol
+            eol
+            "  (def a 1)"      eol
+            eol
+            "  (put @{} :a 2)" eol
+            "  # left =>"      eol
+            "  @{:a 2}"        eol
+            eol
+            "  (+ 1 1)"        eol
+            "  # => right"     eol
+            "  2"              eol
+            eol
+            "  )"))
+
+  (-> (j/par src)
+      j/zip-down
+      r/rewrite-comment-zloc
+      j/root
+      j/gen)
+  # =>
+  (string "( "                          eol
+          eol
+          "  (def a 1)"                 eol
+          eol
+          "  (_verify/is"               eol
+          "  (put @{} :a 2)"            eol
+          "  # left =>"                 eol
+          `  @{:a 2} "line-6 left =>")` eol
+          eol
+          "  (_verify/is"               eol
+          "  (+ 1 1)"                   eol
+          "  # => right"                eol
+          `  2 "line-10 => right")`     eol
+          eol
+          "  :smile)")
+
+  )
+
+(defn r/rewrite-comment-block
+  [comment-src]
+  (-> (j/par comment-src)
+      j/zip-down
+      r/rewrite-comment-zloc
+      j/root
+      j/gen))
+
+(comment
+
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
+
+  (def src
+    (string "(comment"          eol
+            eol
+            "  (def a 1)"       eol
+            eol
+            "  (put @{} :a 2)"  eol
+            "  # =>"            eol
+            "  @{:a 2}"         eol
+            eol
+            "  (+ 1 1)"         eol
+            "  # left => right" eol
+            "  2"               eol
+            eol
+            "  )"))
+
+  (r/rewrite-comment-block src)
+  # =>
+  (string "( "                           eol
+          eol
+          "  (def a 1)"                  eol
+          eol
+          "  (_verify/is"                eol
+          "  (put @{} :a 2)"             eol
+          "  # =>"                       eol
+          `  @{:a 2} "line-6")`          eol
+          eol
+          "  (_verify/is"                eol
+          "  (+ 1 1)"                    eol
+          "  # left => right"            eol
+          `  2 "line-10 left => right")` eol
+          eol
+          "  :smile)")
+
+  )
+
+(defn r/rewrite
+  [src]
+  (var changed nil)
+  # XXX: hack - not sure if robust enough
+  (def eol-str (if (= :windows (os/which)) "\r\n" "\n"))
+  (var curr-zloc
+    (-> (j/par src)
+        j/zip-down
+        # XXX: leading newline is a hack to prevent very first thing
+        #      from being a comment block
+        (j/insert-left [:whitespace @{} eol-str])
+        # XXX: once the newline is inserted, need to move to it
+        j/left))
+  #
+  (while (not (j/end? curr-zloc))
+    # try to find a top-level comment block
+    (if-let [comment-zloc
+             (j/right-until curr-zloc
+                            |(match (j/node $)
+                               [:tuple _ [:symbol _ "comment"]]
+                               true))]
+      # may be rewrite the located top-level comment block
+      (set curr-zloc
+           (if-let [rewritten-zloc
+                    (r/rewrite-comment-zloc comment-zloc)]
+             (do
+               (set changed true)
+               (j/unwrap rewritten-zloc))
+             comment-zloc))
       (break)))
-  (cond
-    (not done)
-    [shorter (string/slice longer (length shorter))]
-    #
-    (= 0 i)
-    ["" nil]
-    #
-    [(string/slice shorter 0 i) ""]))
+  #
+  (when changed
+    (-> curr-zloc
+        j/root
+        j/gen)))
 
 (comment
 
-  (u/diff-path "/usr/include"
-             "/usr/include/fstab.h")
-  # =>
-  ["/usr/include" "/fstab.h"]
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
 
-  (u/diff-path "/tmp" "hello")
-  # =>
-  ["" nil]
+  (def src
+    (string `(require "json")` eol
+            eol
+            "(defn my-fn"      eol
+            "  [x]"            eol
+            "  (+ x 1))"       eol
+            eol
+            "(comment"         eol
+            eol
+            "  (def a 1)"      eol
+            eol
+            "  (put @{} :a 2)" eol
+            "  # =>"           eol
+            "  @{:a 2}"        eol
+            eol
+            "  (my-fn 1)"      eol
+            "  # =>"           eol
+            "  2"              eol
+            eol
+            "  )"              eol
+            eol
+            "(defn your-fn"    eol
+            "  [y]"            eol
+            "  (* y y))"       eol
+            eol
+            "(comment"         eol
+            eol
+            "  (your-fn 3)"    eol
+            "  # =>"           eol
+            "  9"              eol
+            eol
+            "  (def b 1)"      eol
+            eol
+            "  (+ b 1)"        eol
+            "  # =>"           eol
+            "  2"              eol
+            eol
+            "  (def c 2)"      eol
+            eol
+            "  )"              eol
+            ))
 
-  (u/diff-path "/etc/motd" "/etc/issue")
+  (r/rewrite src)
   # =>
-  ["/etc/" ""]
+  (string eol
+          `(require "json")`     eol
+          eol
+          "(defn my-fn"          eol
+          "  [x]"                eol
+          "  (+ x 1))"           eol
+          eol
+          " "                    eol
+          eol
+          "  (def a 1)"          eol
+          eol
+          "  (_verify/is"        eol
+          "  (put @{} :a 2)"     eol
+          "  # =>"               eol
+          `  @{:a 2} "line-12")` eol
+          eol
+          "  (_verify/is"        eol
+          "  (my-fn 1)"          eol
+          "  # =>"               eol
+          `  2 "line-16")`       eol
+          eol
+          "  :smile"             eol
+          eol
+          "(defn your-fn"        eol
+          "  [y]"                eol
+          "  (* y y))"           eol
+          eol
+          " "                    eol
+          eol
+          "  (_verify/is"        eol
+          "  (your-fn 3)"        eol
+          "  # =>"               eol
+          `  9 "line-28")`       eol
+          eol
+          "  (def b 1)"          eol
+          eol
+          "  (_verify/is"        eol
+          "  (+ b 1)"            eol
+          "  # =>"               eol
+          `  2 "line-34")`       eol
+          eol
+          "  (def c 2)"          eol
+          eol
+          "  :smile"             eol)
 
   )
 
-(defn u/touch
+(comment
+
+  (def eol (if (= :windows (os/which)) "\r\n" "\n"))
+
+  # https://github.com/sogaiu/judge-gen/issues/1
+  (def src
+    (string "(comment"        eol
+            eol
+            "  (-> ``"        eol
+            "      123456789" eol
+            "      ``"        eol
+            "      length)"   eol
+            "  # =>"          eol
+            "  9"             eol
+            eol
+            "  (->"           eol
+            "    ``"          eol
+            "    123456789"   eol
+            "    ``"          eol
+            "    length)"     eol
+            "  # =>"          eol
+            "  9"             eol
+            eol
+            "  )"))
+
+  (r/rewrite src)
+  # =>
+  (string eol
+          " "               eol
+          eol
+          "  (_verify/is"   eol
+          "  (-> ``"        eol
+          "      123456789" eol
+          "      ``"        eol
+          "      length)"   eol
+          "  # =>"          eol
+          `  9 "line-7")`   eol
+          eol
+          "  (_verify/is"   eol
+          "  (->"           eol
+          "    ``"          eol
+          "    123456789"   eol
+          "    ``"          eol
+          "    length)"     eol
+          "  # =>"          eol
+          `  9 "line-15")`  eol
+          eol
+          "  :smile")
+
+  )
+
+(defn r/rewrite-as-test-file
+  [src]
+  (when (not (empty? src))
+    (when-let [rewritten (r/rewrite src)]
+      # XXX: hack - not sure if robust enough
+      (def eol-str (if (= :windows (os/which)) "\r\n" "\n"))
+      (string v/as-string
+              eol-str
+              "(_verify/start-tests)"
+              eol-str
+              rewritten
+              eol-str
+              "(_verify/end-tests)"
+              eol-str
+              "(_verify/report)"
+              eol-str))))
+
+
+(comment import ./utils :prefix "")
+(defn u/parse-path
   [path]
-  (with [f (file/open path :w+)]
-    true))
-
-
-
-(defn c/is-import?
-  [zloc]
-  (def node (j/node zloc))
-  (when (not= :tuple (get node 0))
-    (break false))
-  #
-  (def head-zloc (j/down zloc))
-  (when (not head-zloc)
-    (break false))
-  #
-  (def first-child-node (j/node head-zloc))
-  (when (not first-child-node)
-    (break false))
-  #
-  (def fc-node-type (get first-child-node 0))
-  (def first-non-wsc-node
-    (cond
-      (= :symbol fc-node-type)
-      first-child-node
-      #
-      (or (= :whitespace fc-node-type)
-          (= :comment fc-node-type))
-      (-> (j/right-skip-wsc head-zloc)
-          j/node)
-      #
-      nil))
-  (when (not first-non-wsc-node)
-    (break false))
-  #
-  (when (= "import" (get first-non-wsc-node 2))
-    (u/maybe-dump :is-import? (j/gen (j/node zloc)))
-    true))
+  (def revcap-peg
+    ~(sequence (capture (sequence (choice (to (choice "/" `\`))
+                                          (thru -1))))
+               (capture (thru -1))))
+  (when-let [[rev-name rev-dir]
+             (-?>> (string/reverse path)
+                   (peg/match revcap-peg)
+                   (map string/reverse))]
+    [(or rev-dir "") rev-name]))
 
 (comment
 
-  (def zloc (j/zip-down (j/par `(import ./args :prefix "")`)))
-
-  (j/node zloc)
+  (u/parse-path "/tmp/fun/my.fnl")
   # =>
-  [:tuple @{:bc 1 :bl 1 :ec 27 :el 1}
-   [:symbol @{:bc 2 :bl 1 :ec 8 :el 1} "import"]
-   [:whitespace @{:bc 8 :bl 1 :ec 9 :el 1} " "]
-   [:symbol @{:bc 9 :bl 1 :ec 15 :el 1} "./args"]
-   [:whitespace @{:bc 15 :bl 1 :ec 16 :el 1} " "]
-   [:keyword @{:bc 16 :bl 1 :ec 23 :el 1} ":prefix"]
-   [:whitespace @{:bc 23 :bl 1 :ec 24 :el 1} " "]
-   [:string @{:bc 24 :bl 1 :ec 26 :el 1} `""`]]
+  ["/tmp/fun/" "my.fnl"]
 
-  (c/is-import? zloc)
+  (u/parse-path "/my.janet")
   # =>
-  true
+  ["/" "my.janet"]
 
-  (def zloc (j/zip-down (j/par `( import ./args :as a)`)))
-
-  (j/node zloc)
+  (u/parse-path "pp.el")
   # =>
-  [:tuple @{:bc 1 :bl 1 :ec 23 :el 1}
-   [:whitespace @{:bc 2 :bl 1 :ec 3 :el 1} " "]
-   [:symbol @{:bc 3 :bl 1 :ec 9 :el 1} "import"]
-   [:whitespace @{:bc 9 :bl 1 :ec 10 :el 1} " "]
-   [:symbol @{:bc 10 :bl 1 :ec 16 :el 1} "./args"]
-   [:whitespace @{:bc 16 :bl 1 :ec 17 :el 1} " "]
-   [:keyword @{:bc 17 :bl 1 :ec 20 :el 1} ":as"]
-   [:whitespace @{:bc 20 :bl 1 :ec 21 :el 1} " "]
-   [:symbol @{:bc 21 :bl 1 :ec 22 :el 1} "a"]]
+  ["" "pp.el"]
 
-  (c/is-import? zloc)
+  (u/parse-path "/")
   # =>
-  true
+  ["/" ""]
 
-  )
-
-(defn c/analyze-import
-  [node]
-  (def parsed
-    (try (parse (j/gen node))
-      ([e] (errorf "failed to parse node: %n" node))))
-  (assertf (tuple? parsed) "expected tuple, found: %n: for: %n"
-           (type parsed) parsed)
-  #
-  (table :path (string (get parsed 1))
-         ;(tuple/slice parsed 2)))
-
-(comment
-
-  (c/analyze-import [:tuple @{:bc 1 :bl 1 :ec 27 :el 1}
-                   [:symbol @{:bc 2 :bl 1 :ec 8 :el 1} "import"]
-                   [:whitespace @{:bc 8 :bl 1 :ec 9 :el 1} " "]
-                   [:symbol @{:bc 9 :bl 1 :ec 15 :el 1} "./args"]
-                   [:whitespace @{:bc 15 :bl 1 :ec 16 :el 1} " "]
-                   [:keyword @{:bc 16 :bl 1 :ec 23 :el 1} ":prefix"]
-                   [:whitespace @{:bc 23 :bl 1 :ec 24 :el 1} " "]
-                   [:string @{:bc 24 :bl 1 :ec 26 :el 1} "\"\""]])
+  (u/parse-path "")
   # =>
-  @{:path "./args" :prefix ""}
-
-  (c/analyze-import [:tuple @{:bc 1 :bl 1 :ec 23 :el 1}
-                   [:whitespace @{:bc 2 :bl 1 :ec 3 :el 1} " "]
-                   [:symbol @{:bc 3 :bl 1 :ec 9 :el 1} "import"]
-                   [:whitespace @{:bc 9 :bl 1 :ec 10 :el 1} " "]
-                   [:symbol @{:bc 10 :bl 1 :ec 16 :el 1} "./args"]
-                   [:whitespace @{:bc 16 :bl 1 :ec 17 :el 1} " "]
-                   [:keyword @{:bc 17 :bl 1 :ec 20 :el 1} ":as"]
-                   [:whitespace @{:bc 20 :bl 1 :ec 21 :el 1} " "]
-                   [:symbol @{:bc 21 :bl 1 :ec 22 :el 1} "a"]])
-  # =>
-  @{:as 'a :path "./args"}
+  ["" ""]
 
   )
 
 
-(comment import ./jipper :prefix "")
 
-(comment import ./utils :prefix "")
-
-
-# create single file of source from appropriately modified set of
-# files (see the code in prepare), beginning with a starting janet
-# file by:
-#
-# 1. create a zipper from in-path's content, then traverse to the
-#    right, recording the corresponding source code to out-path unless
-#    the encountered zloc has a node representing an import form.
-#
-# 2. if an import form is encountered, record a commented version of
-#    it in out-path, and if the file the import form refers to has not
-#    been visited, visit the file and continue recursively.
-(defn l/link
-  [in-path out-path]
-  (u/maybe-dump :call "link" :in-path in-path :out-path out-path)
-  (def {:sep sep} (u/get-os-bits))
-  # assumes paths are full paths...
-  # XXX: could check if we had abspath?
-  (def [dir-path file-path] (u/split-path in-path))
-  # remember which files have already been "imported"
-  (def seen @{})
-  # for restoring the current working directory (cwd)
-  (def old-dir (os/cwd))
-  # need to operate relative to in-path's dir
-  (os/cd dir-path)
-  #
-  (defer (os/cd old-dir)
-    (with [out-file (file/open out-path :w)]
-      (defn helper
-        [a-path]
-        (def [a-dir a-name] (u/split-path a-path))
-        (def full-path (os/realpath (string (os/cwd) sep a-name)))
-        (when (in seen full-path) (break))
-        #
-        (put seen full-path true)
-        (var zloc
-          (try (-> (slurp full-path)
-                   j/par
-                   j/zip-down)
-            ([e] (errorf "failed to prepare zloc from: %s" full-path))))
-        (while zloc
-          (def cur-node (j/node zloc))
-          (if (c/is-import? zloc)
-            (let [i-tbl (c/analyze-import cur-node)
-                  commented (-> zloc
-                                (j/insert-child [:whitespace {} " "])
-                                (j/insert-child [:symbol {} "comment"])
-                                j/node
-                                j/gen)]
-              (file/write out-file commented "\n")
-              (def i-path (get i-tbl :path))
-              # parse import path
-              (def [dir name] (u/split-path i-path))
-              (def cur-dir (os/cwd))
-              #
-              (os/cd dir)
-              (helper (string i-path ".janet"))
-              (os/cd cur-dir))
-            (file/write out-file (j/gen cur-node)))
-          (set zloc (j/right zloc))))
-      #
-      (helper in-path)
-      (file/flush out-file))))
-
-
-(comment import ./prepare :prefix "")
-(comment import ./common :prefix "")
-
-(comment import ./jipper :prefix "")
-
-(comment import ./utils :prefix "")
-
-
-(defn p/valid-sym-name?
-  [sym-name]
-  (peg/match
-    ~(sequence (some (choice (range "09" "AZ" "az" "\x80\xFF")
-                             (set "!$%&*+-./:<?=>@^_")))
-               -1)
-    sym-name))
-
-(comment
-
-  (p/valid-sym-name? "hello")
-  # =>
-  @[]
-
-  (p/valid-sym-name? "(hi)")
-  # =>
-  nil
-
-  )
-
-(def p/non-call-things
-  {"def" 1 "def-" 1
-   "var" 1 "var-" 1})
-
-(def p/call-things
-  {"defn" 1 "defn-" 1
-   "defmacro" 1 "defmacro-" 1
-   "varfn" 1})
-
-# XXX: defglobal, varglobal, and defdyn are not handled
-(def p/def-things
-  (merge p/non-call-things p/call-things))
-
-(def p/destruct-types
-  (invert [:tuple :bracket-tuple
-           :array :bracket-array
-           :struct :table]))
-
-# XXX: does not handle arbitrarily nested destructuring
-(defn p/analyze-defish
-  [acc a-zloc]
-  (when-let [b-zloc (j/right-skip-wsc a-zloc)]
-    (def [_ _ def-type] (j/node a-zloc))
-    (def [_ loc _] (j/node (j/up a-zloc)))
-    (match (j/node b-zloc)
-      [:symbol _ name]
-      (array/push acc {:name name
-                       :type def-type
-                       :loc loc})
-      #
-      [node-type _ & rest]
-      (when (get p/destruct-types node-type)
-        (array/concat acc
-                      (keep (fn [[node-type _ node-value]]
-                              (when (= :symbol node-type)
-                                {:name node-value
-                                 :type def-type
-                                 :loc loc}))
-                            rest)))))
-  #
-  acc)
-
-(defn p/find-top-level-syms
-  [zloc]
-  (var cur-zloc zloc)
-  (def sym-zlocs @[])
-  #
-  (while cur-zloc
-    (when (match (j/node cur-zloc) [:tuple]
-            (when-let [child-zloc (j/down cur-zloc)]
-              # XXX: assumes first child is a symbol
-              (match (j/node child-zloc) [:symbol _ name]
-                (when (get p/def-things name)
-                  (array/push sym-zlocs child-zloc))))))
-    (set cur-zloc (j/right cur-zloc)))
-  #
-  sym-zlocs)
-
-(defn p/tweak-import-forms
-  [zloc]
-  (var cur-zloc zloc)
-  (set cur-zloc (j/zip-down (j/root cur-zloc)))
-  (while (not (j/end? cur-zloc))
-    (when-let [i-zloc (match (j/node cur-zloc)
-                        # XXX: assumes no whitespace or comments
-                        #      before `import` symbol
-                        [:tuple _ [:symbol _ "import"]]
-                        cur-zloc)
-               i-node (j/node i-zloc)]
-      (def i-tbl (c/analyze-import i-node))
-      (def i-path (get i-tbl :path))
-      (assertf i-path "import form lacks a path: %n" (j/gen i-node))
-      (set cur-zloc (j/replace cur-zloc
-                               [:tuple @{}
-                                [:symbol @{} "import"]
-                                [:whitespace @{} " "]
-                                [:symbol @{} i-path]
-                                [:whitespace @{} " "]
-                                [:keyword @{} ":prefix"]
-                                [:whitespace @{} " "]
-                                [:string @{} `""`]])))
-    (set cur-zloc (j/df-next cur-zloc)))
-  #
-  cur-zloc)
-
-(defn p/rename
-  [prefix in-path out-path]
-  (u/maybe-dump :call "rename" :in-path in-path :out-path out-path)
-  (def prefix-str (string prefix "/"))
-  #
-  (def src (slurp in-path))
-  (def tree (j/par src))
-  (var cur-zloc nil)
-  #
-  (set cur-zloc
-       (try (j/zip-down tree)
-         ([e] (eprintf e)
-              (eprintf "failed to create zipper from file: %s" in-path)
-              (os/exit 1))))
-  # find top-level symbols
-  (def sym-zlocs (p/find-top-level-syms cur-zloc))
-  (def sym-bits (reduce p/analyze-defish @[] sym-zlocs))
-  (def sym-tbl (invert (map |(get $ :name) sym-bits)))
-  # if it worked before, it should work again without error
-  (set cur-zloc (j/zip-down tree))
-  # rename using found top-level symbols
-  (while (not (j/end? cur-zloc))
-    (when-let [found (match (j/node cur-zloc) [:symbol _ name]
-                       (when (get sym-tbl name)
-                         name))]
-      (def new-name (string prefix-str found))
-      (set cur-zloc (j/replace cur-zloc [:symbol @{} new-name])))
-    (set cur-zloc (j/df-next cur-zloc)))
-  #
-  cur-zloc)
-
-(defn p/prepare-imported
-  [in-dir obj-path prefixes opts]
-  (u/maybe-dump :call "prepare-imported" :in-dir in-dir
-                :obj-path obj-path :prefixes prefixes :opts opts)
-  (def {:sep sep} (u/get-os-bits))
-  (eachp [path prefix] prefixes
-    (def [dir fname] (u/split-path path))
-    (def ipath path)
-    (def [dir rest] (u/diff-path in-dir ipath))
-    (assertf (= in-dir dir)
-             "expected in-dir = dir, but: %s %s" in-dir dir)
-    (def [subdir fname] (u/split-path rest))
-    # subdir includes sep at front
-    (def obj-dir (string obj-path subdir))
-    (os/mkdir obj-dir)
-    (def opath (string obj-dir sep fname))
-    # rename some names
-    (def zloc (p/rename prefix ipath opath))
-    # tweak import forms
-    (def t-zloc (p/tweak-import-forms zloc))
-    # save
-    (spit opath (j/gen (j/root t-zloc)))))
-
-(defn p/prepare-start
-  [start-path in-name obj-path opts]
-  (u/maybe-dump :call "prepare-start" :start-path start-path
-                :in-name in-name :obj-path obj-path :opts opts)
-  (def {:sep sep} (u/get-os-bits))
-  (def {:start-file-perm perm} opts)
-  (def in-src (slurp start-path))
-  (def in-tree (j/par in-src))
-  (var cur-zloc nil)
-  (set cur-zloc
-       (try (j/zip-down in-tree)
-         ([e] (eprintf e)
-              (eprintf "zipper creation failed for file: %s" start-path)
-              (os/exit 1))))
-  (def in-out-path (string obj-path sep in-name))
-  # only tweak import forms
-  (spit in-out-path
-        (j/gen (j/root (p/tweak-import-forms cur-zloc))))
-  (when perm
-    (os/chmod in-out-path perm))
-  #
-  in-out-path)
-
-
-(comment import ./study :prefix "")
-(comment import ./common :prefix "")
-
-(comment import ./jipper :prefix "")
-
-(comment import ./utils :prefix "")
-
-
-(defn s/check-import
-  [i-zloc a-path]
-  (def i-node (j/node i-zloc))
-  (def i-stats (c/analyze-import i-node))
-  (assertf (not (has-key? i-stats :only))
-           "import %n has :only in: %s"
-           (j/gen i-node) a-path)
-  #
-  (assertf (not= true (get i-stats :export))
-           "import %n has :export true in: %s"
-           (j/gen i-node) a-path)
-  #
-  i-stats)
-
-# assumes paths are full paths...
-# XXX: could check if we had abspath?
-(defn s/find-files-and-imports
-  [in-path]
-  (def [dir-path file-path] (u/split-path in-path))
-  # remember which files have already been "imported"
-  (def seen @{})
-  (def imports @{})
-  # for restoring the current working directory (cwd)
-  (def old-dir (os/cwd))
-  # need to operate relative to in-path's dir
-  (os/cd dir-path)
-  #
-  (defer (os/cd old-dir)
-    (defn helper
-      [a-path]
-      (when (in seen a-path) (break))
-      #
-      (assertf (= :file (os/stat a-path :mode))
-               "file does not exist or not a file: %s" a-path)
-      (put seen a-path true)
-      (def src (slurp a-path))
-      (when (not (empty? src))
-        (def tree (j/par src))
-        (assertf tree "failed to parse: %s" a-path)
-        (def zloc (j/zip-down tree))
-        (assertf zloc "zip-down failed for tree for path: %s" a-path)
-        (var cur-zloc zloc)
-        (put imports a-path @[])
-        (def import-paths (get imports a-path))
-        (while (def i-zloc
-                 (j/search-from cur-zloc |(match (j/node $) [:tuple]
-                                            (when (c/is-import? $)
-                                              $))))
-          # warn about non-top-level imports since return value could be used
-          (when (<= 2 (length (j/path i-zloc)))
-            (def [_ {:bl bl} _] (j/node i-zloc))
-            (eprintf "non-top-level import in %s at line: %d" a-path bl))
-          #
-          (set cur-zloc (j/df-next i-zloc))
-          (def i-stats (s/check-import i-zloc a-path))
-          (def i-path (get i-stats :path))
-          (def j-file (os/realpath (string i-path ".janet")))
-          # parse import path
-          (def [dir name] (u/split-path i-path))
-          (def prefix (cond (def as (get i-stats :as)) (string as)
-                            (def pfx (get i-stats :prefix)) pfx
-                            name))
-          (put imports a-path
-               (array/push import-paths [i-path j-file prefix]))
-          #
-          (def cur-dir (os/cwd))
-          (os/cd dir)
-          (helper j-file)
-          (os/cd cur-dir))))
-    #
-    (helper (os/realpath file-path))
-    #
-    imports))
-
-(defn s/study
-  [start-path]
-  (u/maybe-dump :call "study" :start-path start-path)
-  (def files-and-imports (s/find-files-and-imports start-path))
-  (u/maybe-dump :files-and-imports files-and-imports)
-  #
-  (def seen @{})
-  #
-  (def prefixes
-    (reduce (fn [acc i-stats]
-              (each [_ fpth pfx] i-stats
-                (when (not (get seen pfx))
-                  (put seen pfx fpth))
-                # same prefix should not be used by multiple paths
-                (assertf (= fpth (get seen pfx))
-                         "prefix `%s` used by multiple paths: %s %s"
-                         pfx fpth (get seen pfx))
-                #
-                (if-let [o-pfx (get acc fpth)]
-                  (assertf (= pfx o-pfx)
-                           "prefixes don't match: %s != %s" pfx o-pfx)
-                  (put acc fpth pfx)))
-              acc)
-            @{}
-            (values files-and-imports)))
-  #
-  prefixes)
-
-
-(comment import ./utils :prefix "")
-
+###########################################################################
 
 (def usage
   ``
-  Usage: jell [<start-path> [<out-path> [<obj-path>]]]
-         jell [-h|--help]
+  Usage: jtfm [<file-or-dir>...]
+         jtfm [-h|--help]
 
-  Create a single `.janet` file from multiple files [1].
+  Create and run comment tests...just the facts, ma'am.
 
   Parameters:
 
-    <start-path>                 path to starting file
-    <out-path>                   path to output file
-    <obj-path>                   path to temp directory
-
-  Defaults:
-
-    <start-path>                 src/main.janet
-    <out-path>                   j.out
-    <obj-path>                   obj
+    <file-or-dir>          path to file or directory
 
   Options:
 
-    -h, --help                   show this output
+    -h, --help             show this output
 
-  Configuration (optional):
+  Configuration:
 
-    .jell.jdn                    configuration file
+    .jtfm.jdn              configuration file
 
-  Example Invocations:
+  Examples:
 
-    Create a single `.janet` file from multiple files:
+    Create and run tests in `src/` directory:
 
-    $ jell src/main.janet output.janet
+    $ jtfm src
 
-    Same but use `tmp/` as an intermediate file directory:
+    `jtfm` can be used via `jpm`, `jeep`, etc. with
+    some one-time setup.  Create a suitable `.jtfm.jdn`
+    file in a project's root directory and a runner
+    file in a project's `test/` subdirectory (see below
+    for further details).
 
-    $ jell src/main.janet output.janet tmp
+    Run via `jeep test`:
 
-    Create file, if a suitable configuration file exists:
+    $ jeep test
 
-    $ jell
+    Run via `jpm test`:
 
-    Without a suitable configuration file, show usage:
+    $ jpm test
 
-    $ jell
+    Run using the configuration file via direct
+    invocation:
 
-  Example `.jell.jdn` content:
+    $ jtfm
 
-    {:start-path "src/main.janet"
-     :out-path "j.out"
-     :obj-path "obj"}
+  Example `.jtfm.jdn` content:
 
-  ---
+    {# describes what to test - file and dir paths
+     :includes ["src" "bin/my-script"]
+     # describes what to skip - file paths only
+     :excludes ["src/sample.janet"]}
 
-  [1] There are a fair number of restrictions on the
-      type of Janet code that can be handled.
+  Example runner file `test/trigger-jtfm.janet`:
+
+    (import ../jtfm)
+
+    (jtfm/main)
   ``)
 
-########################################################################
+(def test-file-ext ".jtfm")
 
-(defn get-full-paths
-  [opts]
-  (def {:sep sep} (u/get-os-bits))
-  (def [start-path obj-path out-path]
-    [(get opts :start-path)
-     (get opts :obj-path)
-     (get opts :out-path)])
+(defn make-tests
+  [filepath &opt opts]
+  (def src (slurp filepath))
+  (def test-src (r/rewrite-as-test-file src))
+  (unless test-src
+    (break :no-tests))
   #
-  (def cur-dir (os/cwd))
+  (def [fdir fname] (u/parse-path filepath))
+  (def test-filepath (string fdir "_" fname test-file-ext))
+  (when (and (not (get opts :overwrite))
+             (os/stat test-filepath :mode))
+    (eprintf "test file already exists for: %p" filepath)
+    (break nil))
   #
-  (assertf (= :file (os/stat start-path :mode))
-           "expected an existing file for: %s" start-path)
-  (def start-path (os/realpath (string cur-dir sep start-path)))
+  (spit test-filepath test-src)
   #
-  (when (not= :directory (os/stat obj-path :mode))
-    (os/mkdir obj-path))
-  (assertf (= :directory (os/stat obj-path :mode))
-           "expected directory at: %s" obj-path)
-  (def obj-path (os/realpath (string cur-dir sep obj-path)))
-  #
-  (def out-path
-    (let [op (string cur-dir sep out-path)]
-      (when (not (= :file (os/stat op :mode)))
-        (u/touch op))
-      #
-      (assertf (= :file (os/stat op :mode))
-               "expected file at %s" op)
-      (if (u/abspath? op)
-        op
-        (os/realpath (string cur-dir sep op)))))
-  #
-  [start-path obj-path out-path])
+  test-filepath)
 
-(defn assimilate
-  [opts]
-  (def {:bs-land bs-land} (u/get-os-bits))
-  (def [start-path obj-path out-path] (get-full-paths opts))
-  (def perm
-    (when (not bs-land) (os/stat start-path :permissions)))
-  (put opts :start-file-perm perm)
-  # study the input files starting at start-path
-  (when (get opts :flycheck) (flycheck start-path))
-  (def prefixes (s/study start-path))
-  (def [in-dir in-name] (u/split-path start-path))
-  (when (get opts :flycheck)
-    (eachp [path _] prefixes
-      (flycheck path)))
-  # prepare imported files: rename names and tweak import forms
-  (p/prepare-imported in-dir obj-path prefixes opts)
-  # prepare starting file: tweak import forms
-  (def in-path (p/prepare-start start-path in-name obj-path opts))
-  # link
-  (l/link in-path out-path)
-  (when (not bs-land)
-    (os/chmod out-path perm)))
+(defn run-tests
+  [test-filepath]
+  (try
+    (with [of (file/temp)]
+      (with [ef (file/temp)]
+        (let [cmd
+              # prevents any contained `main` functions from executing
+              ["janet" "-e" (string "(dofile `" test-filepath "`)")]
+              ecode (os/execute cmd :p {:out of :err ef})]
+          (when (not (zero? ecode))
+            (eprintf "non-zero exit code: %p" ecode))
+          #
+          (file/flush of)
+          (file/flush ef)
+          (file/seek of :set 0)
+          (file/seek ef :set 0)
+          #
+          [(file/read of :all)
+           (file/read ef :all)
+           ecode])))
+    ([e]
+      (eprintf "problem executing tests: %p" e)
+      [nil nil nil])))
+
+(defn report
+  [out err]
+  (when (and out (pos? (length out)))
+    (print out)
+    (print))
+  (when (and err (pos? (length err)))
+    (print "------")
+    (print "stderr")
+    (print "------")
+    (print err)
+    (print))
+  # XXX: kind of awkward
+  (when (and (empty? out) (empty? err))
+    (print "no test output...possibly no tests")
+    (print)))
+
+(defn make-run-report
+  [filepath &opt opts]
+  (default opts @{})
+  # create test source
+  (def result (make-tests filepath opts))
+  (unless result
+    (eprintf "failed to create test file for: %p" filepath)
+    (break nil))
+  #
+  (when (= :no-tests result)
+    (break :no-tests))
+  #
+  (def test-filepath result)
+  # run tests and collect output
+  (def [out err ecode] (run-tests test-filepath))
+  # print out results
+  (report out err)
+  # finish off
+  (when (zero? ecode)
+    (os/rm test-filepath)
+    true))
 
 ########################################################################
 
 (defn main
-  [_ & args]
-  (def opts (a/parse-args args))
-  (u/maybe-dump :opts opts)
+  [& args]
+  (def opts (a/parse-args (drop 1 args)))
   #
-  (cond
-    (get opts :help)
+  (when (get opts :help)
     (print usage)
-    #
-    (and (get opts :start-path)
-         (get opts :obj-path)
-         (get opts :out-path))
-    (assimilate opts)
-    #
-    (do
-      (eprint "please specify a start path and an output path")
-      (eprint "Try jell -h for usage.")
-      (os/exit 1))))
+    (os/exit 0))
+  #
+  (def includes (get opts :includes))
+  (def excludes (get opts :excludes))
+  #
+  (def src-filepaths
+    (s/collect-paths includes |(or (string/has-suffix? ".janet" $)
+                                   (s/has-janet-shebang? $))))
+  # generate tests, run tests, and report
+  (each path src-filepaths
+    (when (and (not (has-value? excludes path))
+               (= :file (os/stat path :mode)))
+      (print path)
+      (def result (make-run-report path opts))
+      (cond
+        (= :no-tests result)
+        # XXX: the 2 newlines here are cosmetic
+        (eprintf "* no tests detected for: %p\n\n" path)
+        #
+        (nil? result)
+        (do
+          (eprintf "failure in: %p" path)
+          (os/exit 1))
+        #
+        (true? result)
+        true
+        #
+        (do
+          (eprintf "Unexpected result %p for: %p" result path)
+          (os/exit 1)))))
+  (printf "All tests completed successfully in %d file(s)."
+          (length src-filepaths)))
 
