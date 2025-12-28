@@ -13,7 +13,7 @@
    :paths [["jtfm.janet" "bin/"]]}
   {:name "jell"
    :url "https://github.com/sogaiu/jell"
-   :tag "8277c882b77bca4f629a2b1559732631998842ea"
+   :tag "5002ee1176b5e9c6249f02d092de2e0d2a792445"
    :paths [["jell" "bin/"]]}]
 
  :binscripts

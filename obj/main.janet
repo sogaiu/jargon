@@ -1,7 +1,7 @@
-#! /usr/bin/env janet
-
 (import ./args :prefix "")
 (import ./commands :prefix "")
+
+(def version "DEVEL")
 
 (def usage
   ``
