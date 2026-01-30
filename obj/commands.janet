@@ -8,10 +8,9 @@
 
 (defn c/search-and-report
   [opts]
-  (def {:query-fn query-fn
-        :name name} opts)
+  (def {:paths paths :query-fn query-fn :pattern pattern} opts)
   #
-  (def [all-results _] (s/search-paths query-fn opts))
+  (def [all-results _] (s/search-paths paths query-fn opts pattern))
   (when (zero? (length all-results))
     (break false))
   #
@@ -61,6 +60,6 @@
     (s/collect-paths includes u/looks-like-janet?))
   #
   (c/search-and-report {:query-fn f/find-def-of
-                      :paths src-filepaths :name name
+                      :paths src-filepaths :pattern name
                       :depth depth}))
 

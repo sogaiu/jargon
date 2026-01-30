@@ -21,7 +21,7 @@
 
 (defn f/find-def-of
   [src opts]
-  (def {:name name} opts)
+  (def {:pattern name} opts)
   #
   (def tree (j/par src))
   (var cur-zloc (j/zip-down tree))
@@ -77,7 +77,7 @@
       [z]
       (pp [:z z]))
     ``
-    {:name "smile"})
+    {:pattern "smile"})
   # =>
   @[@{:def-type "defn"
       :found-name "smile"
@@ -104,7 +104,7 @@
 
     (var- smile "woohoo" "hello")
     ``
-    {:name "smile"})
+    {:pattern "smile"})
   # =>
   @[@{:def-type "var"
       :found-name "smile"
@@ -121,7 +121,7 @@
 
     (defdyn *smile* "smiling docstring")
     ``
-    {:name "*smile*"})
+    {:pattern "*smile*"})
   # =>
   @[@{:def-type "defdyn"
       :found-name "*smile*"
@@ -142,7 +142,7 @@
       [f & args]
       (f ;args))
     ```
-    {:name "as-macro"})
+    {:pattern "as-macro"})
   # =>
   @[@{:def-type "defmacro"
       :found-name "as-macro"
@@ -166,7 +166,7 @@
       [y]
       (pp y))
     ``
-    {:name "smile"})
+    {:pattern "smile"})
   # =>
   @[@{:def-type "def"
       :found-name "smile"
