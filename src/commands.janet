@@ -1,5 +1,6 @@
-(import ./search :as s)
 (import ./find :as f)
+(import ./search :as s)
+(import ./utils :as u)
 
 (def janet-indent
   "Default indentation that the built-in `doc-format` uses."
@@ -41,8 +42,7 @@
   (def includes the-args)
   # find janetish files
   (def src-filepaths
-    (s/collect-paths includes |(or (string/has-suffix? ".janet" $)
-                                   (s/has-janet-shebang? $))))
+    (s/collect-paths includes u/looks-like-janet?))
   #
   (search-and-report {:query-fn f/find-defs
                       :paths src-filepaths
@@ -58,8 +58,7 @@
   (def includes the-args)
   # find janetish files
   (def src-filepaths
-    (s/collect-paths includes |(or (string/has-suffix? ".janet" $)
-                                   (s/has-janet-shebang? $))))
+    (s/collect-paths includes u/looks-like-janet?))
   #
   (search-and-report {:query-fn f/find-def-of
                       :paths src-filepaths :name name
