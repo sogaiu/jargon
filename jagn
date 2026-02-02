@@ -2537,6 +2537,32 @@
   )
 
 
+(comment import ./report :prefix "")
+(def r/janet-indent
+  "Default indentation that the built-in `doc-format` uses."
+  4)
+
+(defn r/report
+  [all-results]
+  (print)
+  (var i 1)
+  (each r all-results
+    (def {:path path :loc {:bc col-no :bl line-no}
+          :def-type def-type :src src} r)
+    (printf "# %d # %s on line %d, column %d" i path line-no col-no)
+    (print)
+    (print src)
+    (print)
+    # XXX: 72 = 80 - 8 (from janet's `boot.janet`)
+    (def width (- (- (dyn :doc-width 80) 8)
+                  r/janet-indent))
+    (printf (string/repeat "#" width))
+    (print)
+    (++ i))
+  #
+  all-results)
+
+
 (comment import ./search :prefix "")
 (def s/sep
   (let [os (os/which)]
@@ -2650,10 +2676,6 @@
 
 
 
-(def c/janet-indent
-  "Default indentation that the built-in `doc-format` uses."
-  4)
-
 (defn c/search-and-report
   [opts]
   (def {:paths paths :query-fn query-fn :pattern pattern} opts)
@@ -2662,23 +2684,7 @@
   (when (zero? (length all-results))
     (break false))
   #
-  (print)
-  (var i 1)
-  (each r all-results
-    (def {:path path :loc {:bc col-no :bl line-no}
-          :def-type def-type :src src} r)
-    (printf "# %d # %s on line %d, column %d" i path line-no col-no)
-    (print)
-    (print src)
-    (print)
-    # XXX: 72 = 80 - 8 (from janet's `boot.janet`)
-    (def width (- (- (dyn :doc-width 80) 8)
-                  c/janet-indent))
-    (printf (string/repeat "#" width))
-    (print)
-    (++ i))
-  #
-  all-results)
+  (r/report all-results))
 
 ########################################################################
 
@@ -2713,7 +2719,7 @@
 
 
 
-(def version "2026-01-30_14-02-04")
+(def version "2026-02-02_12-32-45")
 
 (def usage
   ``
