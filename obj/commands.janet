@@ -1,8 +1,8 @@
 (import ./find :prefix "")
+(import ./itemize :prefix "")
 (import ./report :prefix "")
 (import ./search :prefix "")
 (import ./utils :prefix "")
-(import ./visit :prefix "")
 
 (defn c/search-and-report
   [opts]
@@ -25,7 +25,7 @@
   (def src-filepaths
     (filter |(and (= :file (os/stat $ :mode))
                   (u/looks-like-janet? $))
-            (v/visit ;includes)))
+            (i/itemize ;includes)))
   #
   (c/search-and-report {:query-fn f/find-defs
                       :paths src-filepaths
@@ -43,7 +43,7 @@
   (def src-filepaths
     (filter |(and (= :file (os/stat $ :mode))
                   (u/looks-like-janet? $))
-            (v/visit ;includes)))
+            (i/itemize ;includes)))
   #
   (c/search-and-report {:query-fn f/find-def-of
                       :paths src-filepaths :pattern name
