@@ -2,7 +2,7 @@
 
 (use ./sh-dsl)
 
-(prin "running jell...") (flush)
+(prin "* running jell...") (flush)
 (def jell-exit ($ janet ./bin/jell))
 (assertf (zero? jell-exit)
          "jell exited: %d" jell-exit)
@@ -10,7 +10,7 @@
 
 ########################################################################
 
-(print "running niche...")
+(print "* running niche...")
 (def niche-exit ($ janet ./bin/niche.janet))
 (assertf (zero? niche-exit)
          "niche exited: %d" niche-exit)
@@ -18,11 +18,11 @@
 
 ########################################################################
 
-(print "trying some invocations...")
+(print "* trying some invocations...")
 
 # sourced from jagn -h output
 (def invocations
-  ['[./jagn src]
+  ['[./jagn data]
    '[./jagn zipper src/jipper.janet]])
 
 (each cmd invocations

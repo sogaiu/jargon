@@ -26,9 +26,9 @@
 
     $ jagn zipper src/jipper.janet
 
-    Show definitions in files under `src/`:
+    Show definitions in files under `data/`:
 
-    $ jagn src
+    $ jagn data
   ``)
 
 (defn main
