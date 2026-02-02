@@ -2,6 +2,7 @@
 (import ./report :prefix "")
 (import ./search :prefix "")
 (import ./utils :prefix "")
+(import ./visit :prefix "")
 
 (defn c/search-and-report
   [opts]
@@ -22,7 +23,9 @@
   (def includes the-args)
   # find janetish files
   (def src-filepaths
-    (s/collect-paths includes u/looks-like-janet?))
+    (filter |(and (= :file (os/stat $ :mode))
+                  (u/looks-like-janet? $))
+            (v/visit ;includes)))
   #
   (c/search-and-report {:query-fn f/find-defs
                       :paths src-filepaths
@@ -38,7 +41,9 @@
   (def includes the-args)
   # find janetish files
   (def src-filepaths
-    (s/collect-paths includes u/looks-like-janet?))
+    (filter |(and (= :file (os/stat $ :mode))
+                  (u/looks-like-janet? $))
+            (v/visit ;includes)))
   #
   (c/search-and-report {:query-fn f/find-def-of
                       :paths src-filepaths :pattern name
