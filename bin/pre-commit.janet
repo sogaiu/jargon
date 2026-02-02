@@ -8,9 +8,30 @@
          "jell exited: %d" jell-exit)
 (print "done")
 
+########################################################################
+
 (print "running niche...")
 (def niche-exit ($ janet ./bin/niche.janet))
 (assertf (zero? niche-exit)
          "niche exited: %d" niche-exit)
+(print "done")
+
+########################################################################
+
+(print "trying some invocations...")
+
+# sourced from jagn -h output
+(def invocations
+  ['[./jagn src]
+   '[./jagn zipper src/jipper.janet]])
+
+(each cmd invocations
+  (def exit-code ($ ;cmd))
+  (if (= 0 exit-code)
+    (printf "%n exited: %d" cmd exit-code)
+    (do
+      (eprintf "%n returned non-zero exit code: %d" cmd exit-code)
+      (os/exit 1))))
+
 (print "done")
 
