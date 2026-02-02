@@ -18,6 +18,14 @@
 
 ########################################################################
 
+(print "* updating README...")
+(def readme-update-ext ($ janet jagn -h > README))
+(assertf (zero? readme-update-ext)
+         "updating README exited: %d" readme-update-ext)
+(print "done")
+
+########################################################################
+
 (print "* trying some invocations...")
 
 # sourced from jagn -h output
