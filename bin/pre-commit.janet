@@ -26,6 +26,30 @@
 
 ########################################################################
 
+(print `* trying some "raw" invocations...`)
+
+# sourced from jakl -h output
+(def expectations
+  ['[3 [./jagn data]]
+   '[1 [./jagn zipper src/jipper.janet]]])
+
+(each [n cmd] expectations
+  (def new-cmd
+    [(first cmd) "{:dump true}" ;(drop 1 cmd)])
+  (def output ($< ;new-cmd))
+  (def results (parse output))
+  (def len (length results))
+  (if (= n len)
+    (printf "got all %d expected result(s) for: %n" n new-cmd)
+    (do
+      (eprintf "expected %d result(s) but got %d for: %n"
+               n len new-cmd)
+      (os/exit 1))))
+
+(print "done")
+
+########################################################################
+
 (print "* trying some invocations...")
 
 # sourced from jagn -h output
