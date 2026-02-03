@@ -2677,6 +2677,26 @@
 
 
 
+########################################################################
+
+(defn c/search-and-dump
+  [opts]
+  (def {:paths paths :query-fn query-fn :pattern pattern} opts)
+  #
+  (def [all-results _]
+    (s/search-paths paths query-fn opts pattern))
+  # output could be done via (printf "%j" all-results), but the
+  # resulting output is harder to read and manipulate
+  (print "[")
+  (when (not (empty? all-results))
+    (each r all-results
+      (printf "[%n %n %n %n %n %n %n %n]"
+              (get r :path)
+              (get-in r [:loc :bl]) (get-in r [:loc :bc])
+              (get-in r [:loc :el]) (get-in r [:loc :ec])
+              (get r :def-type) (get r :found-name) (get r :src))))
+  (print "]\n"))
+
 (defn c/search-and-report
   [opts]
   (def {:paths paths :query-fn query-fn :pattern pattern} opts)
@@ -2700,6 +2720,11 @@
                   (u/looks-like-janet? $))
             (i/itemize ;includes)))
   #
+  (when (get opts :dump)
+    (c/search-and-dump {:query-fn f/find-defs
+                      :paths src-filepaths})
+    (break))
+  #
   (c/search-and-report {:query-fn f/find-defs
                       :paths src-filepaths
                       :depth depth}))
@@ -2718,13 +2743,19 @@
                   (u/looks-like-janet? $))
             (i/itemize ;includes)))
   #
+  (when (get opts :dump)
+    (c/search-and-dump {:query-fn f/find-def-of
+                      :paths src-filepaths
+                      :pattern name})
+    (break))
+  #
   (c/search-and-report {:query-fn f/find-def-of
                       :paths src-filepaths :pattern name
                       :depth depth}))
 
 
 
-(def version "2026-02-02_13-56-17")
+(def version "2026-02-03_04-59-00")
 
 (def usage
   ``
@@ -2768,12 +2799,12 @@
     #
     (get opts :enum-defs)
     (let [results (c/all-defs opts)]
-      (when (not results)
+      (when (and (not results) (not (get opts :dump)))
         (print "Nothing found")))
     # base results on files and/or directories searching
     (get opts :paths-search)
     (let [results (c/def-of opts)]
-      (when (not results)
+      (when (and (not results) (not (get opts :dump)))
         (print "Nothing found")))
     # XXX: don't expect to get here
     (errorf "bug somewhere: args: %n opts: %n" args opts)))

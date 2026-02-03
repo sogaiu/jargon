@@ -45,12 +45,12 @@
     #
     (get opts :enum-defs)
     (let [results (c/all-defs opts)]
-      (when (not results)
+      (when (and (not results) (not (get opts :dump)))
         (print "Nothing found")))
     # base results on files and/or directories searching
     (get opts :paths-search)
     (let [results (c/def-of opts)]
-      (when (not results)
+      (when (and (not results) (not (get opts :dump)))
         (print "Nothing found")))
     # XXX: don't expect to get here
     (errorf "bug somewhere: args: %n opts: %n" args opts)))
