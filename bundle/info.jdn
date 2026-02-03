@@ -7,6 +7,10 @@
    :url "https://github.com/sogaiu/some-bundle-bits"
    :tag "7ddb7ec53a6eb8c81b0c22bb7710a01fff57a759"
    :paths [["sbb.janet" "bundle/"]]}
+  {:name "empathy"
+   :url "https://github.com/sogaiu/empathy"
+   :tag "bc8dc194318a466c92ccaa3151290735adce0264"
+   :paths [["empathy.janet" "src/"]]}
   {:name "niche"
    :url "https://github.com/sogaiu/niche"
    :tag "419933e4d6e27a6625bd3494aa71659ec8f36f25"
