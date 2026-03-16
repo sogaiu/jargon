@@ -50,12 +50,12 @@
           (cond
             (get definers head)
             (let [leading-ws (string/repeat " " (dec (get node-loc :bc)))
-                  src (string leading-ws (j/gen node))]
+                  def-src (string leading-ws (j/gen node))]
               (array/push results
                           @{:loc node-loc
                             :def-type (string head)
                             :found-name found-name
-                            :src src}))
+                            :src def-src}))
             # XXX: other cases?
             nil))))
     #
@@ -212,12 +212,12 @@
             (cond
               (get definers head)
               (let [leading-ws (string/repeat " " (dec (get node-loc :bc)))
-                    src (string leading-ws (j/gen node))]
+                    def-src (string leading-ws (j/gen node))]
                 (array/push results
                             @{:loc node-loc
                               :def-type (string head)
                               :found-name name
-                              :src src}))
+                              :src def-src}))
               # XXX: other cases?
               nil)))))
     #
