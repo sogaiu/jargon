@@ -81,7 +81,7 @@
   # =>
   @[@{:def-type "defn"
       :found-name "smile"
-      :loc @{:bc 1 :bl 1 :ec 10 :el 4}
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 10 :el 4 :ep 54}
       :src
       (string
         "(defn smile\n"
@@ -90,7 +90,7 @@
         "  (pp y))")}
     @{:def-type "defn-"
       :found-name "smile"
-      :loc @{:bc 1 :bl 6 :ec 15 :el 9}
+      :loc @{:bc 1 :bl 6 :bp 56 :ec 15 :el 9 :ep 117}
       :src
       (string
         "(defn- smile\n"
@@ -108,11 +108,11 @@
   # =>
   @[@{:def-type "var"
       :found-name "smile"
-      :loc @{:bc 1 :bl 1 :ec 33 :el 1}
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 33 :el 1 :ep 32}
       :src `(var smile "a docstring" {:a 2})`}
     @{:def-type "var-"
       :found-name "smile"
-      :loc @{:bc 1 :bl 3 :ec 30 :el 3}
+      :loc @{:bc 1 :bl 3 :bp 34 :ec 30 :el 3 :ep 63}
       :src `(var- smile "woohoo" "hello")`}]
 
   (find-def-of
@@ -125,11 +125,11 @@
   # =>
   @[@{:def-type "defdyn"
       :found-name "*smile*"
-      :loc @{:bc 1 :bl 1 :ec 17 :el 1}
-      :src "(defdyn *smile*)"} 
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 17 :el 1 :ep 16}
+      :src "(defdyn *smile*)"}
     @{:def-type "defdyn"
       :found-name "*smile*"
-      :loc @{:bc 1 :bl 3 :ec 37 :el 3}
+      :loc @{:bc 1 :bl 3 :bp 18 :ec 37 :el 3 :ep 54}
       :src `(defdyn *smile* "smiling docstring")`}]
 
   (find-def-of
@@ -146,9 +146,9 @@
   # =>
   @[@{:def-type "defmacro"
       :found-name "as-macro"
-      :loc @{:bc 1 :bl 1 :ec 13 :el 7}
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 13 :el 7 :ep 290}
       :src
-      (string 
+      (string
         "(defmacro as-macro\n"
         "  ``Use a function or macro literal `f` as a macro. This lets\n"
         "  any function be used as a macro. Inside a quasiquote, the\n"
@@ -170,11 +170,11 @@
   # =>
   @[@{:def-type "def"
       :found-name "smile"
-      :loc @{:bc 1 :bl 1 :ec 28 :el 1}
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 28 :el 1 :ep 27}
       :src `(def smile "a docstring" 1)`}
     @{:def-type "defn"
       :found-name "smile"
-      :loc @{ :bc 1 :bl 3 :ec 10 :el 6}
+      :loc @{:bc 1 :bl 3 :bp 29 :ec 10 :el 6 :ep 78}
       :src "(defn smile\n  \"I am a docstring.\"\n  [y]\n  (pp y))"}]
 
   )
@@ -242,7 +242,7 @@
   # =>
   @[@{:def-type "defn"
       :found-name "smile"
-      :loc @{:bc 1 :bl 1 :ec 10 :el 4}
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 10 :el 4 :ep 54}
       :src
       (string "(defn smile\n"
               "  \"I am a defn docstring.\"\n"
@@ -250,7 +250,7 @@
               "  (pp y))")}
     @{:def-type "defn-"
       :found-name "smile"
-      :loc @{:bc 1 :bl 6 :ec 15 :el 9}
+      :loc @{:bc 1 :bl 6 :bp 56 :ec 15 :el 9 :ep 117}
       :src
       (string "(defn- smile\n"
               "  \"I am a defn- docstring.\"\n"
@@ -264,13 +264,13 @@
     (var- smile "woohoo" "hello")
     ``)
   # =>
-  @[@{:def-type "var" 
-      :found-name "smile" 
-      :loc @{ :bc 1 :bl 1 :ec 33 :el 1} 
-      :src `(var smile "a docstring" {:a 2})`} 
-    @{:def-type "var-" 
-      :found-name "smile" 
-      :loc @{ :bc 1 :bl 3 :ec 30 :el 3} 
+  @[@{:def-type "var"
+      :found-name "smile"
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 33 :el 1 :ep 32}
+      :src `(var smile "a docstring" {:a 2})`}
+    @{:def-type "var-"
+      :found-name "smile"
+      :loc @{:bc 1 :bl 3 :bp 34 :ec 30 :el 3 :ep 63}
       :src `(var- smile "woohoo" "hello")`}]
 
   (find-defs
@@ -280,13 +280,13 @@
     (defdyn *smile* "smiling docstring")
     ``)
   # =>
-  @[@{:def-type "defdyn" 
-      :found-name "*smile*" 
-      :loc @{ :bc 1 :bl 1 :ec 17 :el 1} 
-      :src "(defdyn *smile*)"} 
-    @{:def-type "defdyn" 
-      :found-name "*smile*" 
-      :loc @{ :bc 1 :bl 3 :ec 37 :el 3} 
+  @[@{:def-type "defdyn"
+      :found-name "*smile*"
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 17 :el 1 :ep 16}
+      :src "(defdyn *smile*)"}
+    @{:def-type "defdyn"
+      :found-name "*smile*"
+      :loc @{:bc 1 :bl 3 :bp 18 :ec 37 :el 3 :ep 54}
       :src `(defdyn *smile* "smiling docstring")`}]
 
   (find-defs
@@ -300,9 +300,9 @@
       (f ;args))
     ```)
   # =>
-  @[@{:def-type "defmacro" 
-      :found-name "as-macro" 
-      :loc @{ :bc 1 :bl 1 :ec 13 :el 7} 
+  @[@{:def-type "defmacro"
+      :found-name "as-macro"
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 13 :el 7 :ep 290}
       :src
       (string
         "(defmacro as-macro\n"
@@ -324,11 +324,11 @@
   # =>
   @[@{:def-type "def"
       :found-name "smile"
-      :loc @{:bc 1 :bl 1 :ec 28 :el 1}
+      :loc @{:bc 1 :bl 1 :bp 0 :ec 28 :el 1 :ep 27}
       :src `(def smile "a docstring" 1)`}
     @{:def-type "defn"
       :found-name "smile"
-      :loc @{:bc 1 :bl 3 :ec 10 :el 6}
+      :loc @{:bc 1 :bl 3 :bp 29 :ec 10 :el 6 :ep 78}
       :src "(defn smile\n  \"I am a docstring.\"\n  [y]\n  (pp y))"}]
 
   )

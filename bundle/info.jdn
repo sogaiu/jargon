@@ -17,11 +17,11 @@
    :paths [["jell" "bin/"]]}
   {:name "jipper"
    :url "https://github.com/sogaiu/jipper"
-   :tag "54142884313f41c3bb8a0b61e354f02b2ddab298"
+   :tag "7e2876d4a4bad8cd080cf150230ecadc31ed9b20"
    :paths [["jipper.janet" "src/"]]}
   {:name "niche"
    :url "https://github.com/sogaiu/niche"
-   :tag "7caf81f636bb97104aada6544219733b3c86badf"
+   :tag "15f5746d95932b7c939aff2ccc6aa91633f2d5e4"
    :paths [["niche.janet" "bin/"]]}
   {:name "spork"
    :url "https://github.com/janet-lang/spork"
